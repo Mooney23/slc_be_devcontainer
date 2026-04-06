@@ -47,17 +47,28 @@ ARG USER_UID=1000
 ARG USER_GID=1000
 RUN groupadd --gid $USER_GID $USERNAME \
     && useradd --uid $USER_UID --gid $USER_GID -m -s /bin/bash $USERNAME \
-    && mkdir -p /home/$USERNAME/.config /home/$USERNAME/.local/share /home/$USERNAME/.local/bin /home/$USERNAME/.claude /home/$USERNAME/.cache/nvim \
+    && mkdir -p /home/$USERNAME/.config \
+               /home/$USERNAME/.local/share \
+               /home/$USERNAME/.local/bin \
+               /home/$USERNAME/.claude \
+               /home/$USERNAME/.cache/nvim \
     && chown -R $USERNAME:$USERNAME /home/$USERNAME
 
-# ── Claude Code (native installer) ──────────────────────────────
-# Installs to ~/.local/bin/claude as the dev user.
-# Pin a specific version or use "latest".
+# ── Claude Code (native binary) ──────────────────────────────────
+# The official install.sh runs `claude install` interactively, which
+# hangs in Docker. Instead, we download the binary directly.
 ARG CLAUDE_CODE_VERSION=latest
-USER $USERNAME
-RUN curl -fsSL https://claude.ai/install.sh | bash -s -- -y ${CLAUDE_CODE_VERSION} \
+RUN DOWNLOAD_DIR=$(mktemp -d) \
+    && VERSION=$(curl -fsSL https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${CLAUDE_CODE_VERSION}) \
+    && ARCH=$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/') \
+    && PLATFORM="linux-${ARCH}" \
+    && curl -fsSL -o "${DOWNLOAD_DIR}/claude" \
+       "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${VERSION}/${PLATFORM}/claude" \
+    && chmod +x "${DOWNLOAD_DIR}/claude" \
+    && mv "${DOWNLOAD_DIR}/claude" /home/$USERNAME/.local/bin/claude \
+    && chown $USERNAME:$USERNAME /home/$USERNAME/.local/bin/claude \
+    && rm -rf "${DOWNLOAD_DIR}" \
     && echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/$USERNAME/.bashrc
-USER root
 
 # Disable auto-updates inside the container — version control
 # happens by rebuilding the image with a new CLAUDE_CODE_VERSION.
