@@ -87,6 +87,9 @@ source ~/.bashrc
 
 ### 6. Build and start the container
 
+# If using a private container registry (e.g., ECR):
+aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <registry-url>
+
 From your project root:
 
 ```bash
