@@ -1,0 +1,8 @@
+FROM your-registry/devcontainer-python:3.13
+
+# ── Service-specific system packages (if any) ────────────────────
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     libpq-dev \
+#     && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
