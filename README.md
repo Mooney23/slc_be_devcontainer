@@ -1,129 +1,189 @@
-# Dev Container: Hardened Python Environment with Claude Code
+# Devcontainer Base Image: Hardened Python Environment with Claude Code
 
-This dev container provides an isolated, firewall-restricted development environment for Python projects. It is designed to be used with Neovim and Claude Code, with strong protections against prompt injection attacks that attempt to exfiltrate credentials or source code.
+This repository contains the shared base Docker image and scripts for hardened Python dev containers. It provides an isolated, firewall-restricted development environment designed for use with Neovim and Claude Code, with strong protections against prompt injection attacks that attempt to exfiltrate credentials or source code.
 
-## Prerequisites
+Individual service repositories inherit from this base image and add only their service-specific configuration. See [Using the Base Image in a Service](#using-the-base-image-in-a-service) for how to set that up.
 
-You need the following installed on your host machine:
-
-- **Docker** (Docker Desktop or Docker Engine)
-- **Dev Container CLI**: install with `npm install -g @devcontainers/cli`
-- **Claude Code**: installed on your host system, specifically the `.claude/` directory and `.claude.json` file needs to be present
-- **Neovim**: your existing Neovim config at `~/.config/nvim`, a default empty dir is created if it does not exist
-- **AWS CLI**: needed to generate short-lived STS tokens for database access
-- A `requirements/local.txt` in your project (for Python dependencies)
-
-## Setup
-
-### 1. Verify your project structure
-
-After copying the dev container files, your project should look like this:
+## Repository Structure
 
 ```
-your-project/
+devcontainer-base/
+├── base-image/
+│   ├── Dockerfile
+│   └── init-firewall.sh
+├── scripts/
+│   ├── dev-container-helpers.sh
+│   ├── post-start.sh
+│   └── print-setup-hint.sh
+├── templates/
+│   ├── devcontainer.json.example
+│   └── Dockerfile.example
+└── README.md
+```
+
+**`base-image/`** — The Dockerfile and firewall script that get built into the shared image. This image includes Python, Neovim, Node.js, Claude Code, firewall tooling, and common Python dev tools (ruff, pyright, pytest, ipython, debugpy).
+
+**`scripts/`** — Helper scripts that are copied into each service's `.devcontainer/` directory. These run on the host (`dev-container-helpers.sh`) or inside the container at startup (`post-start.sh`, `print-setup-hint.sh`).
+
+**`templates/`** — Example files for setting up a new service to use the base image.
+
+---
+
+## Building and Publishing the Base Image
+
+### Prerequisites
+
+- Docker
+- AWS CLI (authenticated with push access to the ECR repository)
+
+### Build
+
+```bash
+cd base-image
+docker build -t your-registry/devcontainer-base:latest .
+```
+
+To pin a specific Claude Code version:
+
+```bash
+docker build --build-arg CLAUDE_CODE_VERSION=2.1.52 \
+  -t your-registry/devcontainer-base:latest .
+```
+
+To use a different Python version:
+
+```bash
+docker build --build-arg PYTHON_VERSION=3.12 \
+  -t your-registry/devcontainer-base:3.12 .
+```
+
+### Push to ECR
+
+```bash
+# Authenticate Docker with ECR (once per session)
+aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <registry-url>
+
+# Push the image
+docker push your-registry/devcontainer-base:latest
+```
+
+Tag images with dates or semver so services can pin to a known-good version:
+
+```bash
+docker tag your-registry/devcontainer-base:latest your-registry/devcontainer-base:2026-04-06
+docker push your-registry/devcontainer-base:2026-04-06
+```
+
+### When to Rebuild
+
+Rebuild and push a new base image when:
+
+- Neovim, Node.js, or Claude Code versions need updating
+- Python dev tools (ruff, pyright, etc.) need updating
+- The firewall script changes (new default domains, logic fixes)
+- New system packages are needed across all services
+
+You do NOT need to rebuild the base image when:
+
+- A service's Python dependencies change (handled by `pip install` at container creation)
+- A service needs different forwarded ports (configured in `devcontainer.json`)
+- Mounts or environment variables change (configured in `devcontainer.json`)
+
+---
+
+## Using the Base Image in a Service
+
+### 1. Create the service's `.devcontainer/` directory
+
+Copy the scripts and templates into your service repo:
+
+```bash
+mkdir -p your-service/.devcontainer
+
+# Copy the shared scripts
+cp scripts/post-start.sh your-service/.devcontainer/
+cp scripts/print-setup-hint.sh your-service/.devcontainer/
+
+# Copy and rename the templates
+cp templates/Dockerfile.example your-service/.devcontainer/Dockerfile
+cp templates/devcontainer.json.example your-service/.devcontainer/devcontainer.json
+```
+
+Edit `devcontainer.json` to set the service name, `postCreateCommand`, and `forwardPorts` for your service.
+
+Edit the `Dockerfile` if your service needs additional system packages. If it doesn't, the one-line `FROM` is all you need.
+
+Your service's `.devcontainer/` should look like this:
+
+```
+your-service/
 ├── .devcontainer/
 │   ├── devcontainer.json
 │   ├── Dockerfile
-│   ├── init-firewall.sh
-│   ├── dev-container-helpers.sh
+│   ├── post-start.sh
 │   └── print-setup-hint.sh
-├── requirements/
-│   └── local.txt
 └── ... your code ...
 ```
 
-### 2. Ensure the Claude config directory exists on your host
+### 2. Set up the host environment (one-time per developer)
 
-The container mounts `~/.claude` from your host to persist authentication tokens. If this directory doesn't exist yet, create it:
-
-```bash
-mkdir -p ~/.claude
-```
-
-### 3. Create a shared notes directory
-
-Create a `notes` directory as a sibling to your project repositories. This directory is mounted into every dev container at `/workspace/notes`, so your notes are available regardless of which service you're working in:
-
-```
-~/projects/
-├── service-A/
-├── another-service/
-└── notes/              ← shared across all dev containers
-```
+Install the helper script:
 
 ```bash
-mkdir -p ~/projects/notes
+cp scripts/dev-container-helpers.sh ~/.local/bin/
+echo '[ -f ~/.local/bin/dev-container-helpers.sh ] && source ~/.local/bin/dev-container-helpers.sh' >> ~/.bashrc
+source ~/.bashrc
 ```
 
-If you use Obsidian or another notes tool, you can point this to an existing vault — just make sure `NOTES_PATH` (below) points to the right directory. On WSL, this can be a Windows path like `/mnt/c/Users/YourName/Documents/MyVault/work-notes`.
-
-### 4. Set required environment variables on your host
-
-Add these to your `~/.bashrc` or `~/.zshrc`:
+Add the required environment variables to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
-# Full path to your shared notes directory (sibling to your repos)
+# Full path to your shared notes directory
 export NOTES_PATH="/home/yourusername/projects/notes"
 
-# Full path to your EC2 SSH key (can be anywhere on your machine)
+# Full path to your EC2 SSH key
 export EC2_KEY_PATH="/home/yourusername/path/to/your-ec2-key.pem"
 
-# The EC2 bastion host (hostname or IP) for database tunneling
+# The EC2 bastion host for database tunneling
 export EC2_HOST="ec2-xx-xx-xx-xx.compute-1.amazonaws.com"
 
 # If your IAM user has MFA enabled (recommended)
 export AWS_MFA_SERIAL="arn:aws:iam::123456789012:mfa/your-username"
 ```
 
-### 5. Install the dev container helper script
-
-Copy the helper script to a shared location and source it in your shell config. This only needs to be done once — the same script works across all projects that use this dev container setup.
+Create the shared notes directory if it doesn't exist:
 
 ```bash
-cp .devcontainer/dev-container-helpers.sh ~/.local/bin/
-echo '[ -f ~/.local/bin/dev-container-helpers.sh ] && source ~/.local/bin/dev-container-helpers.sh' >> ~/.bashrc
-source ~/.bashrc
+mkdir -p ~/projects/notes
 ```
 
-### 6. Build and start the container
-
-# If using a private container registry (e.g., ECR):
-aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <registry-url>
-
-From your project root:
+Ensure the Claude config directory exists:
 
 ```bash
+mkdir -p ~/.claude
+```
+
+### 3. Authenticate Docker with the container registry
+
+If the base image is hosted on a private registry (e.g., ECR), authenticate before your first build:
+
+```bash
+aws ecr get-login-password --region <region> | docker login --username AWS --password-stdin <registry-url>
+```
+
+ECR tokens expire after 12 hours. If `dcup` fails with an image pull error, re-run the login command.
+
+### 4. Build and start
+
+```bash
+cd your-service
 dcup
 ```
 
-This will build the Docker image (first run takes a few minutes), start the container, install your Python dependencies, and initialize the firewall. Watch the output — you should see the firewall verification checks pass at the end:
-
-```
-PASS: example.com is blocked
-PASS: webhook.site is blocked
-PASS: api.anthropic.com is reachable
-PASS: EC2 bastion (ec2-xx-xx-xx-xx.compute-1.amazonaws.com) is reachable on port 22, this may fail due to timing issues
-All checks passed. Container is locked down.
-```
-
-If any check fails, do not proceed. Review the firewall script output for errors.
-
-### 7. Authenticate Claude Code
-
-On first run, Claude Code will ask you to authenticate:
+### 5. Daily workflow
 
 ```bash
-dcdanger
-```
-
-It will print a URL to your terminal. Copy that URL and open it in a browser on your host machine. Complete the OAuth flow in the browser. The token is stored in the mounted `~/.claude` directory, so you won't need to do this again unless the token expires.
-
-### 8. Start working
-
-Once authenticated, your daily workflow is:
-
-```bash
-cd your-project
+cd your-service
 dcup          # start the container
 dcdanger      # launch Claude Code (with AWS creds injected)
 dcnvim        # open Neovim (with AWS creds injected)
@@ -131,30 +191,21 @@ dcshell       # get a bash shell (with AWS creds injected)
 dcrefresh     # manually refresh the STS token if it expires mid-session
 ```
 
-The first time you run `dcdanger`, `dcnvim`, or `dcshell` in a terminal session, the helper script will call `aws sts get-session-token` to generate short-lived AWS credentials. If you have MFA enabled, it will prompt for your TOTP code. The token is cached in memory for the duration of your shell session (default: 4 hours) and injected into the container via environment variables on each exec — never written to disk.
+---
 
-### 9. Stopping and restarting
+## What's in the Base Image
 
-```bash
-# Stop the container (preserves state)
-docker stop $(docker ps -q --filter "label=devcontainer.local_folder=$(pwd)")
-
-# Start it again (firewall re-initializes automatically)
-dcup
-```
-
-### 10. Rebuilding after config changes
-
-If you modify the Dockerfile, devcontainer.json, or init-firewall.sh:
-
-```bash
-devcontainer up --workspace-folder . --build-no-cache
-```
-
-and to delete the existing container:
-```bash
-devcontainer up --workspace-folder . --remove-existing-container --build-no-cache
-```
+| Component | Purpose |
+|---|---|
+| Python 3.13 (slim) | Base runtime |
+| Neovim | Editor |
+| Node.js 22 | Required by some Neovim tooling |
+| Claude Code (native binary) | AI coding assistant |
+| ruff, pyright, pytest, ipython, debugpy | Python dev tools |
+| iptables, ipset, iproute2, dnsutils, jq | Firewall tooling |
+| curl, git, tmux, ripgrep, fd-find, unzip | Core dev utilities |
+| `init-firewall.sh` | Egress firewall script (baked in at `/usr/local/bin/`) |
+| Non-root `dev` user (UID 1000) | All work runs unprivileged |
 
 ---
 
@@ -171,16 +222,16 @@ The flow is:
 5. These are passed into the container via `env` on `devcontainer exec`
 6. Boto3 picks them up automatically from environment variables
 
-This means your long-lived IAM access keys never enter the container. The temporary credentials expire after a configurable duration (default: 4 hours, adjustable via `export DC_TOKEN_DURATION=28800` for 8 hours). Even if a prompt injection reads the environment variables inside the container, the egress firewall blocks any exfiltration attempt, and the credentials expire shortly after.
+Your long-lived IAM access keys never enter the container. The temporary credentials expire after a configurable duration (default: 4 hours, adjustable via `export DC_TOKEN_DURATION=28800` for 8 hours). Even if a prompt injection reads the environment variables inside the container, the egress firewall blocks any exfiltration attempt, and the credentials expire shortly after.
 
 ## EC2 SSH Tunnel: How It Works
 
-The Flask app creates an SSH tunnel to an EC2 bastion host to reach the database. This requires two things inside the container:
+Some services create an SSH tunnel to an EC2 bastion host to reach the database. This requires two things inside the container:
 
-1. **The EC2 SSH key**: mounted read-only from `~/.ssh/$EC2_KEY_NAME` on your host to `/home/dev/.ssh/ec2-key` inside the container. Only this single key is mounted — not your entire `~/.ssh` directory.
+1. **The EC2 SSH key**: mounted read-only from the host to `/home/dev/.ssh/ec2-key` inside the container. Only this single key is mounted — not your entire `~/.ssh` directory.
 2. **Network access to the EC2 host**: the firewall whitelists `$EC2_HOST` alongside the other allowed domains.
 
-The `EC2_PRIVATE_KEY_PATH` environment variable is set automatically in `devcontainer.json` to point to the mounted key, so no code changes are needed.
+The `EC2_PRIVATE_KEY_PATH` environment variable is set in `devcontainer.json` to point to the mounted key, so no code changes are needed.
 
 ---
 
@@ -232,8 +283,7 @@ The container can ONLY reach:
 | `statsig.anthropic.com` | Claude Code telemetry (optional) |
 | `statsig.com` | Claude Code telemetry (optional) |
 | `registry.npmjs.org` | Node package registry (optional) |
-| `shorelineiot.atlassian.net` | Atlassian / Jira access |
-| `github.com` | For claude plugin marketplace (optional) |
+| `github.com` | Claude plugin marketplace (optional) |
 | `$EC2_HOST` | SSH tunnel to database |
 | AWS service CIDRs (us-east-1) | SSM, S3, EC2, STS API endpoints |
 | Docker host network | Port forwarding (OAuth, app ports) |
@@ -281,30 +331,16 @@ Finally, the script runs verification checks to confirm that the firewall is wor
 
 ### Adding domains to the whitelist
 
-If you need the container to reach additional domains (for example, `pypi.org` for runtime pip installs, or specific documentation sites), edit the `ALLOWED_DOMAINS` array in `init-firewall.sh`:
+To add domains to the default whitelist for all services, edit the `ALLOWED_DOMAINS` array in `base-image/init-firewall.sh`, rebuild, and push the base image.
+
+To add domains for a single service without modifying the base image, use a local firewall override (see below).
+
+### Overriding the firewall locally
+
+You can place a local copy of `init-firewall.sh` in a service's `.devcontainer/` directory. The `post-start.sh` script checks for a local copy first — if one exists, it copies it into the base image's location before running it. If no local copy exists, the base image's version runs as usual.
 
 ```bash
-ALLOWED_DOMAINS=(
-    "api.anthropic.com"
-    "sentry.io"
-    "statsig.anthropic.com"
-    "statsig.com"
-    "registry.npmjs.org"
-    # Add your domains below:
-    "pypi.org"
-    "files.pythonhosted.org"
-)
-```
-
-Then restart the container so the firewall re-initializes with the new rules. Every domain you add is a potential vector for prompt injection content, so add only what you genuinely need.
-
-#### Overriding the firewall locally
-
-If you need to temporarily allow additional domains without modifying the base image or the committed firewall script, you can place a local copy of `init-firewall.sh` in your service's `.devcontainer/` directory. The `post-start.sh` script checks for a local copy first — if one exists, it copies it into the base image's location before running it. If no local copy exists, the base image's version runs as usual.
-
-```bash
-# Copy the firewall script from the base repo as a starting point
-# (or extract it from the running container)
+# Extract the current firewall script from the running container
 dcexec cat /usr/local/bin/init-firewall.sh > .devcontainer/init-firewall.sh
 
 # Edit it — add your domains to the ALLOWED_DOMAINS array
@@ -314,7 +350,7 @@ vim .devcontainer/init-firewall.sh
 dcup
 ```
 
-To revert to the standard firewall, just delete the local copy and restart:
+To revert to the standard firewall, delete the local copy and restart:
 
 ```bash
 rm .devcontainer/init-firewall.sh
@@ -326,7 +362,6 @@ If you don't want personal firewall overrides committed to the service repo, add
 ```bash
 echo '.devcontainer/init-firewall.sh' >> .gitignore
 ```
-
 
 ### Changing the AWS region or services
 
@@ -405,3 +440,29 @@ Set these on your host before sourcing the helpers:
 | `DC_TOKEN_DURATION` | No | STS token lifetime in seconds (default: 14400 = 4 hours) |
 | `DC_WORKSPACE` | No | Default workspace folder (default: current directory) |
 | `AWS_DEFAULT_REGION` | No | AWS region (default: us-east-1) |
+
+---
+
+## Stopping and Restarting
+
+```bash
+# Stop the container (preserves state)
+docker stop $(docker ps -q --filter "label=devcontainer.local_folder=$(pwd)")
+
+# Start it again (firewall re-initializes automatically)
+dcup
+```
+
+## Rebuilding After Config Changes
+
+If you modify the service's Dockerfile or devcontainer.json:
+
+```bash
+devcontainer up --workspace-folder . --build-no-cache
+```
+
+To delete the existing container and rebuild:
+
+```bash
+devcontainer up --workspace-folder . --remove-existing-container --build-no-cache
+```
