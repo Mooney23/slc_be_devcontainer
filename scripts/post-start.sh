@@ -1,5 +1,13 @@
 #!/bin/bash
 echo $EC2_HOST > /tmp/.ec2_host
+
+# Use a local firewall script if present, otherwise the base image's copy
+if [ -f .devcontainer/init-firewall.sh ]; then
+    echo "Using local firewall script (.devcontainer/init-firewall.sh)"
+    sudo cp .devcontainer/init-firewall.sh /usr/local/bin/init-firewall.sh
+    sudo chmod +x /usr/local/bin/init-firewall.sh
+fi
+
 sudo /usr/local/bin/init-firewall.sh
 bash .devcontainer/print-setup-hint.sh
 
