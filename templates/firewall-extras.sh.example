@@ -1,0 +1,16 @@
+# .devcontainer/firewall-extras.sh
+#
+# Service-specific domains to add to the firewall whitelist.
+# This file is sourced by the base image's init-firewall.sh — it does
+# not replace it. Add domains your service needs beyond the base set.
+#
+# Each domain you add is a potential vector for prompt injection
+# content, so add only what you genuinely need.
+
+EXTRA_DOMAINS=(
+    "subdomain.atlassian.net"
+    "bitbucket.org"
+    "github.com"
+    # "pypi.org"
+    # "files.pythonhosted.org"
+)

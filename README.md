@@ -17,6 +17,7 @@ devcontainer-base/
 │   └── print-setup-hint.sh
 ├── templates/
 │   ├── devcontainer.json.example
+│   ├── firewall-extras.sh.example
 │   └── Dockerfile.example
 └── README.md
 ```
@@ -120,6 +121,7 @@ your-service/
 ├── .devcontainer/
 │   ├── devcontainer.json
 │   ├── Dockerfile
+│   ├── firewall-extras.sh     # (optional) service-specific whitelisted domains
 │   ├── post-start.sh
 │   └── print-setup-hint.sh
 └── ... your code ...
@@ -329,21 +331,49 @@ Everything else hits a `REJECT` rule (not `DROP`) with `icmp-admin-prohibited`. 
 
 Finally, the script runs verification checks to confirm that the firewall is working correctly: it confirms that `example.com` and `webhook.site` (common exfiltration test targets) are blocked, that `api.anthropic.com` is reachable, and that the EC2 bastion host (if configured) is reachable on port 22. If any critical check fails, the script exits with a non-zero code, which causes `postStartCommand` to fail and prevents the container from being used in an insecure state.
 
-### Adding domains to the whitelist
+### Adding domains to the default whitelist
 
-To add domains to the default whitelist for all services, edit the `ALLOWED_DOMAINS` array in `base-image/init-firewall.sh`, rebuild, and push the base image.
+To add domains for all services, edit the `ALLOWED_DOMAINS` array in `base-image/init-firewall.sh`, rebuild, and push the base image.
 
-To add domains for a single service without modifying the base image, use a local firewall override (see below).
+### Adding domains for a single service
 
-### Overriding the firewall locally
+If a service needs to reach additional domains beyond the base whitelist, create a `firewall-extras.sh` file in the service's `.devcontainer/` directory:
 
-You can place a local copy of `init-firewall.sh` in a service's `.devcontainer/` directory. The `post-start.sh` script checks for a local copy first — if one exists, it copies it into the base image's location before running it. If no local copy exists, the base image's version runs as usual.
+```bash
+# .devcontainer/firewall-extras.sh
+#
+# Service-specific domains to add to the firewall whitelist.
+# This file is sourced by the base image's init-firewall.sh — it does
+# not replace it. Add domains your service needs beyond the base set.
+#
+# Each domain you add is a potential vector for prompt injection
+# content, so add only what you genuinely need.
+
+EXTRA_DOMAINS=(
+    "your-atlassian-instance.atlassian.net"
+    "bitbucket.org"
+    # "pypi.org"
+    # "files.pythonhosted.org"
+)
+```
+
+The base image's firewall script automatically checks for this file at `/workspace/.devcontainer/firewall-extras.sh` and appends any `EXTRA_DOMAINS` to the whitelist. No rebuild of the base image is needed — just restart the container:
+
+```bash
+dcup
+```
+
+This file is safe to commit to the service repo since it only contains domain names, not firewall logic.
+
+### Fully replacing the firewall script
+
+If you need to change the firewall logic itself (not just add domains), you can place a full copy of `init-firewall.sh` in the service's `.devcontainer/` directory. The `post-start.sh` script checks for a local copy first — if one exists, it replaces the base image's version before running it. If no local copy exists, the base image's version runs as usual.
 
 ```bash
 # Extract the current firewall script from the running container
 dcexec cat /usr/local/bin/init-firewall.sh > .devcontainer/init-firewall.sh
 
-# Edit it — add your domains to the ALLOWED_DOMAINS array
+# Edit it — modify the firewall logic as needed
 vim .devcontainer/init-firewall.sh
 
 # Restart the container to pick up the changes
@@ -357,7 +387,7 @@ rm .devcontainer/init-firewall.sh
 dcup
 ```
 
-If you don't want personal firewall overrides committed to the service repo, add it to your `.gitignore`:
+If the override is temporary or personal, gitignore it:
 
 ```bash
 echo '.devcontainer/init-firewall.sh' >> .gitignore
