@@ -89,10 +89,19 @@ ALLOWED_DOMAINS=(
     # "statsig.anthropic.com"
     # "statsig.com"
     # "registry.npmjs.org"
-    "bitbucket.org"
-    "shorelineiot.atlassian.net"
-    "github.com"
 )
+
+# --- Service-specific domain extensions ---
+# If the service provides a firewall-extras.sh, source it to pick up
+# additional domains. This avoids replacing the entire firewall script
+# just to add a few domains.
+EXTRA_DOMAINS=()
+if [ -f /workspace/.devcontainer/firewall-extras.sh ]; then
+    echo "Loading service-specific domains from firewall-extras.sh..."
+    source /workspace/.devcontainer/firewall-extras.sh
+    ALLOWED_DOMAINS+=("${EXTRA_DOMAINS[@]}")
+    echo "Added ${#EXTRA_DOMAINS[@]} service-specific domain(s)"
+fi
 
 # EC2 bastion host(s) for SSH tunneling to the database.
 # EC2_HOST is written to /tmp/.ec2_host by postStartCommand before
