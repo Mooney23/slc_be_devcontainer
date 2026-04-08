@@ -1,6 +1,13 @@
 #!/bin/bash
 echo $EC2_HOST > /tmp/.ec2_host
 
+# Fix ownership of bind-mounted .claude directory.
+# On Linux, bind mounts preserve the host's UID/GID. If the host user's
+# UID differs from the container's dev user (1000), Claude Code can't
+# create session directories and fails with EACCES on .claude/session-env/.
+# Errors from the readonly skills submount are expected and harmless.
+sudo chown -R "$(whoami):$(whoami)" /home/dev/.claude 2>/dev/null || true
+
 # Use a local firewall script if present, otherwise the base image's copy
 if [ -f .devcontainer/init-firewall.sh ]; then
     echo "Using local firewall script (.devcontainer/init-firewall.sh)"

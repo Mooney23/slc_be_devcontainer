@@ -18,7 +18,7 @@
   ],
 
   // Ensure Neovim config dirs exist on the host before mounting
-  "initializeCommand": "mkdir -p ~/.config/nvim ~/.local/share/nvim && rm -rf ~/.cache/.claude-skills-resolved && mkdir -p ~/.cache/.claude-skills-resolved && cp -rL ~/.claude/skills/* ~/.cache/.claude-skills-resolved/ 2>/dev/null || true",
+  "initializeCommand": "mkdir -p ~/.config/nvim ~/.local/share/nvim ~/.claude && rm -rf ~/.cache/.claude-skills-resolved && mkdir -p ~/.cache/.claude-skills-resolved && cp -rL ~/.claude/skills/* ~/.cache/.claude-skills-resolved/ 2>/dev/null || true",
 
   "mounts": [
     // Neovim config
