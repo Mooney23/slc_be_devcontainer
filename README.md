@@ -11,11 +11,12 @@ devcontainer-base/
 ├── base-image/
 │   ├── Dockerfile
 │   ├── init-firewall.sh
-│   └── refresh-firewall-domains.sh
+│   ├── refresh-firewall-domains.sh
+│   ├── dev-post-start.sh        # canonical post-start logic (baked into image)
+│   └── print-setup-hint.sh      # one-time setup hint (baked into image)
 ├── scripts/
-│   ├── dev-container-helpers.sh
-│   ├── post-start.sh
-│   └── print-setup-hint.sh
+│   ├── dev-container-helpers.sh # host shell helpers (dcup, dcdanger, …)
+│   └── post-start.sh            # thin wrapper copied into each service
 ├── templates/
 │   ├── devcontainer.json.example
 │   ├── firewall-extras.sh.example
@@ -23,9 +24,9 @@ devcontainer-base/
 └── README.md
 ```
 
-**`base-image/`** — The Dockerfile and firewall script that get built into the shared image. This image includes Python, Neovim, Node.js, Claude Code, firewall tooling, and common Python dev tools (ruff, pyright, pytest, ipython, debugpy).
+**`base-image/`** — The Dockerfile plus everything baked into the shared image: the firewall scripts, the canonical post-start logic (`dev-post-start.sh`), and the setup hint. This image also includes Python, Neovim, Node.js, Claude Code, firewall tooling, and common Python dev tools (ruff, pyright, pytest, ipython, debugpy).
 
-**`scripts/`** — Helper scripts that are copied into each service's `.devcontainer/` directory. These run on the host (`dev-container-helpers.sh`) or inside the container at startup (`post-start.sh`, `print-setup-hint.sh`).
+**`scripts/`** — Files that live with each service. `dev-container-helpers.sh` is sourced on the **host**. `post-start.sh` is a **thin wrapper** copied into each service's `.devcontainer/`; it just `exec`s the baked `/usr/local/bin/dev-post-start.sh`, so startup-logic changes ship via a `docker pull` of a new base image rather than re-copying scripts into every service. See [How post-start works](#how-post-start-works).
 
 **`templates/`** — Example files for setting up a new service to use the base image.
 
@@ -102,14 +103,15 @@ Copy the scripts and templates into your service repo:
 ```bash
 mkdir -p your-service/.devcontainer
 
-# Copy the shared scripts
+# Copy the thin post-start wrapper (it just execs the baked dev-post-start.sh)
 cp scripts/post-start.sh your-service/.devcontainer/
-cp scripts/print-setup-hint.sh your-service/.devcontainer/
 
 # Copy and rename the templates
 cp templates/Dockerfile.example your-service/.devcontainer/Dockerfile
 cp templates/devcontainer.json.example your-service/.devcontainer/devcontainer.json
 ```
+
+`post-start.sh` is a one-line wrapper around the baked `/usr/local/bin/dev-post-start.sh` — you copy it in once and never touch it again. (The setup hint and all real startup logic live in the base image now, so there's no `print-setup-hint.sh` to copy.)
 
 Edit `devcontainer.json` to set the service name, `postCreateCommand`, and `forwardPorts` for your service.
 
@@ -122,9 +124,9 @@ your-service/
 ├── .devcontainer/
 │   ├── devcontainer.json
 │   ├── Dockerfile
-│   ├── firewall-extras.sh     # (optional) service-specific whitelisted domains
-│   ├── post-start.sh
-│   └── print-setup-hint.sh
+│   ├── firewall-extras.sh       # (optional) service-specific whitelisted domains
+│   ├── post-start.local.sh      # (optional) service-specific startup steps
+│   └── post-start.sh            # thin wrapper → /usr/local/bin/dev-post-start.sh
 └── ... your code ...
 ```
 
@@ -210,6 +212,8 @@ dcrefresh     # manually refresh the STS token if it expires mid-session
 | curl, git, tmux, ripgrep, fd-find, unzip | Core dev utilities |
 | `init-firewall.sh` | Egress firewall script (baked in at `/usr/local/bin/`) |
 | `refresh-firewall-domains.sh` | Periodic DNS re-resolution of service domains (baked in at `/usr/local/bin/`) |
+| `dev-post-start.sh` | Canonical post-start logic run on every container start (baked in at `/usr/local/bin/`) |
+| `print-setup-hint.sh` | One-time setup hint shown on first start (baked in at `/usr/local/bin/`) |
 | Non-root `dev` user (UID 1000) | All work runs unprivileged |
 
 ---
@@ -298,6 +302,61 @@ All other outbound traffic is blocked and rejected. A prompt injection that trie
 
 ---
 
+## How post-start works
+
+Every container start runs `postStartCommand` from the service's `devcontainer.json`:
+
+```jsonc
+"postStartCommand": "bash .devcontainer/post-start.sh"
+```
+
+This runs **inside the container** (unlike `initializeCommand`, which runs on the host). The service repo is bind-mounted at `/workspace`, so `.devcontainer/post-start.sh` is just a mounted file the container executes.
+
+That file is a **thin wrapper** — it contains no logic, only a handoff to the baked script:
+
+```bash
+exec bash /usr/local/bin/dev-post-start.sh
+```
+
+`dev-post-start.sh` lives **in the base image**, so it's part of the container's filesystem and reachable from the same command. The full chain:
+
+```
+postStartCommand (in container)
+  → /workspace/.devcontainer/post-start.sh   (mounted wrapper — copy once, never changes)
+      → /usr/local/bin/dev-post-start.sh      (baked — the real logic, updated via docker pull)
+          → init-firewall.sh, DNS-refresh cron, plugin workarounds, …
+          → /workspace/.devcontainer/post-start.local.sh   (optional, per-service)
+```
+
+**Why this split:** startup logic used to live in a full `post-start.sh` copied into every service, so each change had to be re-copied across all of them (and a `docker pull` alone would silently miss it). Now the logic lives in the image: change `dev-post-start.sh`, rebuild, push, and every service picks it up on `docker pull`. The per-service wrapper never changes.
+
+### Service-specific startup steps
+
+If a service needs custom startup work, add a `post-start.local.sh` to its `.devcontainer/`. `dev-post-start.sh` runs it automatically at the end if present:
+
+```bash
+# your-service/.devcontainer/post-start.local.sh
+nohup python scripts/dev_mock_sqs.py >/tmp/mocksqs.log 2>&1 &
+```
+
+This keeps service-specific logic isolated from the shared script, so base updates never conflict with it.
+
+### Migrating an existing service to the wrapper
+
+Older services carry a full `post-start.sh` (and a `print-setup-hint.sh`). To move them to the baked model, do this once per service:
+
+```bash
+# Replace the full post-start.sh with the thin wrapper
+cp /path/to/slc_be_devcontainer/scripts/post-start.sh .devcontainer/post-start.sh
+
+# The setup hint is baked into the image now — remove the per-service copy
+rm -f .devcontainer/print-setup-hint.sh
+```
+
+No `devcontainer.json` change is needed — `postStartCommand` still points at `.devcontainer/post-start.sh`. After this, the service tracks startup changes through the base image automatically. (Requires a base image that includes `dev-post-start.sh` — rebuild/pull first.)
+
+---
+
 ## How the Firewall Works
 
 The firewall script (`init-firewall.sh`) runs every time the container starts via `postStartCommand`. It uses `iptables` and `ipset` to create a default-deny egress policy — all outbound traffic is blocked unless it's going to an explicitly whitelisted destination. Here's what happens step by step.
@@ -344,7 +403,7 @@ Finally, the script runs verification checks to confirm that the firewall is wor
 
 Phases 1–5 run once, at container start. That leaves a gap for CDN-fronted domains: CloudFront (and similar CDNs) rotate their IP addresses frequently, so a domain resolved at startup can point to IPs that are no longer valid an hour later, and outbound connections to it break mid-session.
 
-To handle this, `post-start.sh` installs a cron job (in root's crontab) that runs `refresh-firewall-domains.sh` every 5 minutes. That script re-resolves the service's `EXTRA_DOMAINS` (from `firewall-extras.sh`) and adds any newly-seen IPs to the `allowed-domains` ipset. It is **add-only** — stale IPs are never removed. Leaving them is safe: the CDN no longer routes traffic through them, so they can't be used for exfiltration, and removing them could tear down in-flight connections.
+To handle this, `dev-post-start.sh` installs a cron job (in root's crontab) that runs `refresh-firewall-domains.sh` every 5 minutes. That script re-resolves the service's `EXTRA_DOMAINS` (from `firewall-extras.sh`) and adds any newly-seen IPs to the `allowed-domains` ipset. It is **add-only** — stale IPs are never removed. Leaving them is safe: the CDN no longer routes traffic through them, so they can't be used for exfiltration, and removing them could tear down in-flight connections.
 
 A few deliberate scope choices:
 
@@ -390,7 +449,7 @@ This file is safe to commit to the service repo since it only contains domain na
 
 ### Fully replacing the firewall script
 
-If you need to change the firewall logic itself (not just add domains), you can place a full copy of `init-firewall.sh` in the service's `.devcontainer/` directory. The `post-start.sh` script checks for a local copy first — if one exists, it replaces the base image's version before running it. If no local copy exists, the base image's version runs as usual.
+If you need to change the firewall logic itself (not just add domains), you can place a full copy of `init-firewall.sh` in the service's `.devcontainer/` directory. The baked `dev-post-start.sh` checks for a local copy first — if one exists, it replaces the base image's version before running it. If no local copy exists, the base image's version runs as usual.
 
 ```bash
 # Extract the current firewall script from the running container
@@ -471,13 +530,13 @@ The original intent of this narrow entry was for the `dev` user to be able to ru
 dev ALL=(root) NOPASSWD:ALL
 ```
 
-The result is that `dev` can run **any** command as root. You can confirm this inside a running container with `sudo -l`. The base image's own `post-start.sh` relies on this broad access (it uses `sudo cp`, `sudo mkdir`, `sudo crontab`, `sudo cron`, etc.), as does the periodic DNS refresh cron setup.
+The result is that `dev` can run **any** command as root. You can confirm this inside a running container with `sudo -l`. The base image's own `dev-post-start.sh` relies on this broad access (it uses `sudo cp`, `sudo mkdir`, `sudo crontab`, `sudo cron`, etc.), as does the periodic DNS refresh cron setup.
 
 ### Security implication
 
 This weakens Layer 2 (the egress firewall). Because Claude Code runs as `dev` — and under `dcdanger` it runs with `--dangerously-skip-permissions` — a prompt injection could in principle run `sudo iptables -F && sudo iptables -P OUTPUT ACCEPT` to tear down the firewall and then exfiltrate freely. The narrow `init-firewall.sh`-only sudoers entry does **not** prevent this, because the broader `common-utils` grant supersedes it.
 
-If you want the firewall to be tamper-resistant from inside the container, the broad grant must be removed and `post-start.sh` / the cron setup reworked to use narrowly-scoped sudoers entries (or run from a root-owned mechanism the `dev` user can't modify). Until then, treat the firewall as a guardrail against *accidental or naive* exfiltration, not as a hard boundary against an adversary that specifically targets it.
+If you want the firewall to be tamper-resistant from inside the container, the broad grant must be removed and `dev-post-start.sh` / the cron setup reworked to use narrowly-scoped sudoers entries (or run from a root-owned mechanism the `dev` user can't modify). Until then, treat the firewall as a guardrail against *accidental or naive* exfiltration, not as a hard boundary against an adversary that specifically targets it.
 
 All non-privileged work (Claude Code, Neovim, Python, your code) still runs as the unprivileged `dev` user.
 

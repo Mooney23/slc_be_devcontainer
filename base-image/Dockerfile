@@ -86,12 +86,20 @@ RUN pip install --no-cache-dir \
     ipython \
     debugpy
 
-# ── Firewall scripts + sudo ──────────────────────────────────────
-# refresh-firewall-domains.sh is run periodically from cron (installed in
-# post-start.sh) to re-resolve CDN-fronted domains whose IPs rotate.
+# ── Startup + firewall scripts + sudo ────────────────────────────
+# dev-post-start.sh is the canonical post-start logic for all services; each
+# service's .devcontainer/post-start.sh is a thin wrapper that execs it, so
+# startup changes propagate via `docker pull` (no per-service re-copy).
+# refresh-firewall-domains.sh is run periodically from cron (installed by
+# dev-post-start.sh) to re-resolve CDN-fronted domains whose IPs rotate.
 COPY init-firewall.sh /usr/local/bin/
 COPY refresh-firewall-domains.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-firewall-domains.sh \
+COPY dev-post-start.sh /usr/local/bin/
+COPY print-setup-hint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/init-firewall.sh \
+                /usr/local/bin/refresh-firewall-domains.sh \
+                /usr/local/bin/dev-post-start.sh \
+                /usr/local/bin/print-setup-hint.sh \
     && echo "$USERNAME ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" \
        > /etc/sudoers.d/$USERNAME-firewall \
     && chmod 0440 /etc/sudoers.d/$USERNAME-firewall
