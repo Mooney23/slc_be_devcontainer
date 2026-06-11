@@ -10,7 +10,8 @@ Individual service repositories inherit from this base image and add only their 
 devcontainer-base/
 ├── base-image/
 │   ├── Dockerfile
-│   └── init-firewall.sh
+│   ├── init-firewall.sh
+│   └── refresh-firewall-domains.sh
 ├── scripts/
 │   ├── dev-container-helpers.sh
 │   ├── post-start.sh
@@ -205,8 +206,10 @@ dcrefresh     # manually refresh the STS token if it expires mid-session
 | Claude Code (native binary) | AI coding assistant |
 | ruff, pyright, pytest, ipython, debugpy | Python dev tools |
 | iptables, ipset, iproute2, dnsutils, jq | Firewall tooling |
+| cron | Runs the periodic DNS refresh for the firewall |
 | curl, git, tmux, ripgrep, fd-find, unzip | Core dev utilities |
 | `init-firewall.sh` | Egress firewall script (baked in at `/usr/local/bin/`) |
+| `refresh-firewall-domains.sh` | Periodic DNS re-resolution of service domains (baked in at `/usr/local/bin/`) |
 | Non-root `dev` user (UID 1000) | All work runs unprivileged |
 
 ---
@@ -305,13 +308,19 @@ Docker uses an embedded DNS server at `127.0.0.11` for container name resolution
 
 ### Phase 2: Allow foundational traffic
 
-Before applying any restrictions, the script permits traffic that everything else depends on: outbound DNS (UDP port 53) so domain names can be resolved, localhost/loopback so LSP servers and local tools work, and the Docker host network (auto-detected via the default gateway) so port forwarding works for things like Claude Code's OAuth browser flow and your application ports.
+Before applying any restrictions, the script permits traffic that everything else depends on: outbound DNS (both UDP and TCP port 53) so domain names can be resolved, localhost/loopback so LSP servers and local tools work, and the Docker host network (auto-detected via the default gateway) so port forwarding works for things like Claude Code's OAuth browser flow and your application ports.
+
+TCP port 53 is allowed alongside UDP because DNS responses larger than 512 bytes (common for CDN-backed domains that return many records) fall back to TCP. If only UDP were permitted, those lookups would silently fail even though tools like `dig` — which may use a different code path — appeared to work.
+
+The script also locks down IPv6 as one of its first steps. The firewall is built entirely on `iptables`/`ipset`, which only govern IPv4. `curl` and the glibc resolver prefer IPv6 (AAAA records) when a domain is dual-stack — as CloudFront-backed domains are — so leaving IPv6 open would let that traffic take a completely unfiltered path, defeating the egress controls.
+
+Note the mechanism: you cannot disable the IPv6 stack with `sysctl` inside the container, because Docker mounts `/proc/sys` read-only — `sysctl -w net.ipv6.conf.*.disable_ipv6=1` fails with "permission denied" even as root with `NET_ADMIN`. Instead, the script uses `ip6tables` (which *does* work at runtime under `NET_ADMIN`) to drop all IPv6 traffic except loopback, rejecting outbound so tools fail fast and fall back to the filtered IPv4 path.
 
 ### Phase 3: Resolve and whitelist domains
 
 The script maintains an `ALLOWED_DOMAINS` array of hostnames that the container is permitted to reach. For each domain, it runs `dig` to resolve the current A records and adds the resulting IP addresses to an `ipset` hash called `allowed-domains`. If a domain is already a raw IP address, it's added directly.
 
-This is where the DNS-based limitation comes in: the IPs are resolved once at container start. If a service like `api.anthropic.com` rotates to new IPs during a long session, outbound connections to that service may fail until you restart the container. In practice this is rare for typical dev sessions lasting a few hours.
+This is where the DNS-based limitation comes in: the IPs are resolved once at container start. If a service like `api.anthropic.com` rotates to new IPs during a long session, outbound connections to that service may fail until you restart the container. In practice this is rare for typical dev sessions lasting a few hours. Service-specific `EXTRA_DOMAINS` (see Phase 6) are the exception — they're re-resolved periodically to handle CDN IP rotation.
 
 ### Phase 4: Whitelist AWS service CIDRs
 
@@ -330,6 +339,20 @@ After building the whitelist, the script sets the default `iptables` policies to
 Everything else hits a `REJECT` rule (not `DROP`) with `icmp-admin-prohibited`. The distinction matters: `REJECT` sends an immediate error response back to the calling process, so tools like `curl` fail fast with a clear error. `DROP` would silently swallow packets, causing tools to hang for their full timeout duration before failing — which makes debugging harder and slows down prompt injection attempts that are probing for connectivity.
 
 Finally, the script runs verification checks to confirm that the firewall is working correctly: it confirms that `example.com` and `webhook.site` (common exfiltration test targets) are blocked, that `api.anthropic.com` is reachable, and that the EC2 bastion host (if configured) is reachable on port 22. If any critical check fails, the script exits with a non-zero code, which causes `postStartCommand` to fail and prevents the container from being used in an insecure state.
+
+### Phase 6: Periodic DNS refresh (CDN IP rotation)
+
+Phases 1–5 run once, at container start. That leaves a gap for CDN-fronted domains: CloudFront (and similar CDNs) rotate their IP addresses frequently, so a domain resolved at startup can point to IPs that are no longer valid an hour later, and outbound connections to it break mid-session.
+
+To handle this, `post-start.sh` installs a cron job (in root's crontab) that runs `refresh-firewall-domains.sh` every 5 minutes. That script re-resolves the service's `EXTRA_DOMAINS` (from `firewall-extras.sh`) and adds any newly-seen IPs to the `allowed-domains` ipset. It is **add-only** — stale IPs are never removed. Leaving them is safe: the CDN no longer routes traffic through them, so they can't be used for exfiltration, and removing them could tear down in-flight connections.
+
+A few deliberate scope choices:
+
+- **Only `EXTRA_DOMAINS` are refreshed**, not the base `ALLOWED_DOMAINS`. The base domains (e.g. `api.anthropic.com`) rarely rotate within a single session, and keeping the refresh scoped to each service's explicitly-opted-in domains avoids broadening the whitelist.
+- **Dynamic re-resolution, not CIDR allowlisting.** Whitelisting all CloudFront CIDRs would open the container to *any* CloudFront-fronted domain, weakening the exfiltration defense. Re-resolving only the whitelisted domains keeps the allowlist tight. (AWS service endpoints are handled by CIDR instead — see Phase 4 — because they are AWS infrastructure that already requires valid credentials to be useful.)
+- **Non-CDN domains are no-ops.** Domains with stable IPs (e.g. `bitbucket.org`) simply re-resolve to the same addresses, so there's no harm in refreshing them too — one less list to maintain.
+
+If a service defines no `firewall-extras.sh`, the refresh script exits immediately and the cron job is a no-op.
 
 ### Adding domains to the default whitelist
 
@@ -420,7 +443,7 @@ No security setup is perfect. Be aware of these remaining risks:
 
 **Container escape.** This setup assumes Docker's container isolation holds. Container escapes are rare but not impossible. The `NET_ADMIN` and `NET_RAW` capabilities required for the firewall are additional kernel capabilities granted to the container, though they are used here to restrict rather than expand access.
 
-**DNS-based firewall limitations.** The firewall resolves domain names to IP addresses at container start time. If a whitelisted service (like `api.anthropic.com`) rotates its IPs during a long session, connections may break until the container is restarted. In practice this rarely matters for typical dev sessions. AWS services are handled differently using CIDR ranges (see Phase 4 above), so they are not affected by this limitation.
+**DNS-based firewall limitations.** The firewall resolves domain names to IP addresses at container start time. If a base whitelisted service (like `api.anthropic.com`) rotates its IPs during a long session, connections may break until the container is restarted. In practice this rarely matters for typical dev sessions. Two categories are handled differently and are not affected: AWS services use CIDR ranges (see Phase 4), and service-specific `EXTRA_DOMAINS` are re-resolved every 5 minutes by a cron job (see Phase 6) to absorb CDN IP rotation.
 
 **No internet research.** Because the firewall blocks general internet access, Claude Code cannot browse documentation, search the web, or fetch resources from arbitrary URLs. It operates using only its training knowledge and the contents of your project. If you need Claude to reference external information, look it up on your host and paste the relevant content into your prompt.
 
@@ -434,13 +457,29 @@ This might seem counterintuitive: you're granting extra capabilities to make the
 
 ## The Sudoers Configuration Explained
 
-The Dockerfile grants the non-root `dev` user passwordless sudo access to exactly one command: `/usr/local/bin/init-firewall.sh`. This is configured via:
+The firewall must run as root because `iptables` and `ipset` require it. To allow that, the Dockerfile adds an explicit sudoers entry scoped to the firewall script:
 
 ```
 dev ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh
 ```
 
-This means the `dev` user cannot run arbitrary commands as root — only the firewall initialization script. The firewall must run as root because `iptables` requires it, but all other operations (Claude Code, Neovim, Python, your code) run as the unprivileged `dev` user.
+The original intent of this narrow entry was for the `dev` user to be able to run *only* the firewall script as root, and nothing else.
+
+**However, that is not the effective configuration.** The `common-utils` devcontainer feature (declared in `devcontainer.json`) also provisions the `dev` user and, by default, grants it broad passwordless sudo via a separate file at `/etc/sudoers.d/dev`:
+
+```
+dev ALL=(root) NOPASSWD:ALL
+```
+
+The result is that `dev` can run **any** command as root. You can confirm this inside a running container with `sudo -l`. The base image's own `post-start.sh` relies on this broad access (it uses `sudo cp`, `sudo mkdir`, `sudo crontab`, `sudo cron`, etc.), as does the periodic DNS refresh cron setup.
+
+### Security implication
+
+This weakens Layer 2 (the egress firewall). Because Claude Code runs as `dev` — and under `dcdanger` it runs with `--dangerously-skip-permissions` — a prompt injection could in principle run `sudo iptables -F && sudo iptables -P OUTPUT ACCEPT` to tear down the firewall and then exfiltrate freely. The narrow `init-firewall.sh`-only sudoers entry does **not** prevent this, because the broader `common-utils` grant supersedes it.
+
+If you want the firewall to be tamper-resistant from inside the container, the broad grant must be removed and `post-start.sh` / the cron setup reworked to use narrowly-scoped sudoers entries (or run from a root-owned mechanism the `dev` user can't modify). Until then, treat the firewall as a guardrail against *accidental or naive* exfiltration, not as a hard boundary against an adversary that specifically targets it.
+
+All non-privileged work (Claude Code, Neovim, Python, your code) still runs as the unprivileged `dev` user.
 
 ---
 

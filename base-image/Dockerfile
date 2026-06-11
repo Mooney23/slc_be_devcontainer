@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     ca-certificates \
     sudo \
+    cron \
     iptables \
     ipset \
     iproute2 \
@@ -85,9 +86,12 @@ RUN pip install --no-cache-dir \
     ipython \
     debugpy
 
-# ── Firewall script + sudo ───────────────────────────────────────
+# ── Firewall scripts + sudo ──────────────────────────────────────
+# refresh-firewall-domains.sh is run periodically from cron (installed in
+# post-start.sh) to re-resolve CDN-fronted domains whose IPs rotate.
 COPY init-firewall.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/init-firewall.sh \
+COPY refresh-firewall-domains.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/refresh-firewall-domains.sh \
     && echo "$USERNAME ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" \
        > /etc/sudoers.d/$USERNAME-firewall \
     && chmod 0440 /etc/sudoers.d/$USERNAME-firewall

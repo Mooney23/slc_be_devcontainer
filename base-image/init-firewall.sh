@@ -16,6 +16,36 @@ IFS=$'\n\t'
 
 echo "=== Initializing container firewall ==="
 
+# --- Lock down IPv6 ---
+# curl and the glibc resolver prefer IPv6 (AAAA records) when available,
+# but this firewall's allow-list (the allowed-domains ipset) is IPv4-only.
+# If IPv6 is left open, traffic to dual-stack domains (e.g. CloudFront)
+# can take the IPv6 path, which is completely unfiltered — defeating the
+# egress controls.
+#
+# We cannot disable the IPv6 stack via sysctl here: Docker mounts /proc/sys
+# read-only inside the container, so `sysctl -w net.ipv6.conf.*.disable_ipv6=1`
+# fails with "permission denied" even as root with NET_ADMIN. Instead we lock
+# IPv6 down with ip6tables (which DOES work at runtime under NET_ADMIN):
+# drop everything except loopback, and REJECT outbound so tools fail fast and
+# fall back to the filtered IPv4 path.
+if command -v ip6tables >/dev/null 2>&1; then
+    echo "Locking down IPv6 via ip6tables..."
+    ip6tables -F
+    ip6tables -A INPUT  -i lo -j ACCEPT
+    ip6tables -A OUTPUT -o lo -j ACCEPT
+    # Fast-fail outbound so curl falls back to IPv4 quickly; fall back to a
+    # plain REJECT if the icmp6 reject variant isn't available.
+    ip6tables -A OUTPUT ! -o lo -j REJECT --reject-with icmp6-adm-prohibited 2>/dev/null \
+        || ip6tables -A OUTPUT ! -o lo -j REJECT 2>/dev/null \
+        || true
+    ip6tables -P INPUT DROP
+    ip6tables -P FORWARD DROP
+    ip6tables -P OUTPUT DROP
+else
+    echo "WARNING: ip6tables not found — IPv6 is NOT locked down"
+fi
+
 # --- Preserve Docker internal DNS before flushing ---
 # Docker uses an embedded DNS server at 127.0.0.11 for container name
 # resolution. We need to save and restore these NAT rules.
@@ -43,8 +73,12 @@ fi
 # --- Allow DNS and localhost first (needed for everything else) ---
 # Outbound DNS
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
+
 # Inbound DNS responses
 iptables -A INPUT -p udp --sport 53 -j ACCEPT
+iptables -A INPUT -p tcp --sport 53 -j ACCEPT
+
 # Localhost (needed for Claude Code OAuth callback, LSP, etc.)
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
