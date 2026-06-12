@@ -137,18 +137,20 @@ if [ -f /workspace/.devcontainer/firewall-extras.sh ]; then
     echo "Added ${#EXTRA_DOMAINS[@]} service-specific domain(s)"
 fi
 
-# EC2 bastion host(s) for SSH tunneling to the database.
-# EC2_HOST is written to /tmp/.ec2_host by postStartCommand before
-# this script runs, because sudo strips environment variables.
-EC2_HOST=""
-if [ -f /tmp/.ec2_host ]; then
-    EC2_HOST=$(cat /tmp/.ec2_host | tr -d '[:space:]')
+# EC2 bastion host for SSH tunneling to the database.
+# DEV_EC2_HOST is the developer's bastion, written to /tmp/.dev_ec2_host by
+# postStartCommand before this script runs (sudo strips environment variables).
+# It is intentionally separate from the service app's own EC2_HOST (loaded from
+# the service .env per environment) so the two don't collide.
+DEV_EC2_HOST=""
+if [ -f /tmp/.dev_ec2_host ]; then
+    DEV_EC2_HOST=$(cat /tmp/.dev_ec2_host | tr -d '[:space:]')
 fi
-if [ -n "$EC2_HOST" ]; then
-    ALLOWED_DOMAINS+=("$EC2_HOST")
-    echo "EC2 bastion host added to whitelist: $EC2_HOST"
+if [ -n "$DEV_EC2_HOST" ]; then
+    ALLOWED_DOMAINS+=("$DEV_EC2_HOST")
+    echo "EC2 bastion host added to whitelist: $DEV_EC2_HOST"
 else
-    echo "WARNING: EC2_HOST not set — SSH tunneling to database will not work"
+    echo "WARNING: DEV_EC2_HOST not set — SSH tunneling to database will not work"
 fi
 
 for domain in "${ALLOWED_DOMAINS[@]}"; do
@@ -264,11 +266,11 @@ else
 fi
 
 # Should SUCCEED: EC2 bastion (if configured)
-if [ -n "$EC2_HOST" ]; then
-    if nc -z -w 5 "$EC2_HOST" 22 2>/dev/null; then
-        echo "PASS: EC2 bastion ($EC2_HOST) is reachable on port 22"
+if [ -n "$DEV_EC2_HOST" ]; then
+    if nc -z -w 5 "$DEV_EC2_HOST" 22 2>/dev/null; then
+        echo "PASS: EC2 bastion ($DEV_EC2_HOST) is reachable on port 22"
     else
-        echo "WARNING: Cannot reach EC2 bastion ($EC2_HOST) on port 22 — SSH tunnel may fail"
+        echo "WARNING: Cannot reach EC2 bastion ($DEV_EC2_HOST) on port 22 — SSH tunnel may fail"
     fi
 fi
 

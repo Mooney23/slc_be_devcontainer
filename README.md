@@ -149,8 +149,12 @@ export NOTES_PATH="/home/yourusername/projects/notes"
 # Full path to your EC2 SSH key
 export EC2_KEY_PATH="/home/yourusername/path/to/your-ec2-key.pem"
 
-# The EC2 bastion host for database tunneling
-export EC2_HOST="ec2-xx-xx-xx-xx.compute-1.amazonaws.com"
+# The EC2 bastion host for database tunneling.
+# NOTE: this is intentionally DEV_EC2_HOST, not EC2_HOST. Services load their
+# own EC2_HOST from their .env (per environment) via python-dotenv; injecting
+# EC2_HOST from the host would shadow that (dotenv won't override an existing
+# env var), so the dev bastion gets its own name.
+export DEV_EC2_HOST="ec2-xx-xx-xx-xx.compute-1.amazonaws.com"
 
 # If your IAM user has MFA enabled (recommended)
 export AWS_MFA_SERIAL="arn:aws:iam::123456789012:mfa/your-username"
@@ -238,7 +242,7 @@ Your long-lived IAM access keys never enter the container. The temporary credent
 Some services create an SSH tunnel to an EC2 bastion host to reach the database. This requires two things inside the container:
 
 1. **The EC2 SSH key**: mounted read-only from the host to `/home/dev/.ssh/ec2-key` inside the container. Only this single key is mounted — not your entire `~/.ssh` directory.
-2. **Network access to the EC2 host**: the firewall whitelists `$EC2_HOST` alongside the other allowed domains.
+2. **Network access to the EC2 host**: the firewall whitelists `$DEV_EC2_HOST` alongside the other allowed domains (and AWS EC2 CIDRs cover bastions generally).
 
 The `EC2_PRIVATE_KEY_PATH` environment variable is set in `devcontainer.json` to point to the mounted key, so no code changes are needed.
 
@@ -293,7 +297,7 @@ The container can ONLY reach:
 | `statsig.com` | Claude Code telemetry (optional) |
 | `registry.npmjs.org` | Node package registry (optional) |
 | `github.com` | Claude plugin marketplace (optional) |
-| `$EC2_HOST` | SSH tunnel to database |
+| `$DEV_EC2_HOST` | SSH tunnel to database |
 | AWS service CIDRs (us-east-1) | SSM, S3, EC2, STS API endpoints |
 | Docker host network | Port forwarding (OAuth, app ports) |
 | localhost | LSP servers, local tools |
@@ -496,7 +500,7 @@ No security setup is perfect. Be aware of these remaining risks:
 
 **Claude auth token.** The `~/.claude` mount means a prompt injection could read your Claude Code auth token. The blast radius is limited to someone making API calls as you to Anthropic, which is much smaller than SSH or AWS credential theft.
 
-**EC2 SSH key.** The mounted EC2 key is read-only and the firewall limits where SSH connections can go (only `$EC2_HOST`). A prompt injection cannot exfiltrate the key to an external server, but it could theoretically use it to SSH into the bastion host.
+**EC2 SSH key.** The mounted EC2 key is read-only and the firewall limits where SSH connections can go (only `$DEV_EC2_HOST`, plus AWS EC2 CIDRs). A prompt injection cannot exfiltrate the key to an external server, but it could theoretically use it to SSH into the bastion host.
 
 **Short-lived AWS credentials in environment.** A prompt injection could read the STS token from environment variables. However, the egress firewall blocks exfiltration, and the token expires within hours. This is a significant improvement over mounting long-lived `~/.aws` credentials.
 
@@ -563,7 +567,7 @@ Set these on your host before sourcing the helpers:
 |---|---|---|
 | `NOTES_PATH` | Yes | Full path to your shared notes directory |
 | `EC2_KEY_PATH` | Yes | Full path to your EC2 SSH key file |
-| `EC2_HOST` | Yes | EC2 bastion hostname or IP |
+| `DEV_EC2_HOST` | Yes | EC2 bastion hostname or IP for the dev DB tunnel (named distinctly from the service's own `EC2_HOST`, which it loads from `.env`) |
 | `AWS_MFA_SERIAL` | No | Your IAM MFA device ARN (prompted for TOTP if set) |
 | `DC_TOKEN_DURATION` | No | STS token lifetime in seconds (default: 14400 = 4 hours) |
 | `DC_WORKSPACE` | No | Default workspace folder (default: current directory) |

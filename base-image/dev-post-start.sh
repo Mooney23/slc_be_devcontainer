@@ -25,9 +25,12 @@ DEVCONTAINER_DIR="/workspace/.devcontainer"
 
 echo "=== dev-post-start (base image) ==="
 
-# EC2_HOST is written to a file because sudo strips environment variables, and
-# init-firewall.sh (run via sudo) needs it to whitelist the bastion host.
-echo "$EC2_HOST" > /tmp/.ec2_host
+# DEV_EC2_HOST is the developer's bastion host (set on the host and injected via
+# devcontainer.json). It is written to a file because sudo strips environment
+# variables, and init-firewall.sh (run via sudo) needs it to whitelist the
+# bastion. Kept separate from the service app's own EC2_HOST (loaded from the
+# service .env per environment) so the devcontainer doesn't shadow it.
+echo "$DEV_EC2_HOST" > /tmp/.dev_ec2_host
 
 # --- Firewall init ---
 # Use a service-local firewall script if present, otherwise the base image's
