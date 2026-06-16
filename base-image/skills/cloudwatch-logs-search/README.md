@@ -199,9 +199,19 @@ event** (the blue-highlighted row), built from the event's `logStreamName`,
 
 ## Validating it
 
-`evals/ground-truth.md` has known-answer checks (search hits, noise rejection, true
-negatives, multi-term operators, and a console-link parity click). Run them after any
-change to the scripts; they confirm the skill matches reality on your account's data.
+This is a **stateless engine** — no bundled known-answer files. Earn trust once: run a
+search for a term you *know* is present and confirm it comes back REAL where you expect,
+then open the emitted `--link-html` and confirm the console highlights the same event
+(the one check that can't be unit-tested). Cover the pure logic (classification, pattern
+assembly, link building) with offline unit tests next to the scripts.
+
+## Recording gotchas (optional)
+
+The skill ships no knowledge files and discovers groups/retention/format live. If you
+ever hit a non-obvious gotcha worth keeping — a field that looks like an id but isn't, a
+mis-named group, a window where a function logged at INFO — jot it in **this repo's**
+`docs/` (e.g. `docs/cloudwatch-logs-search.md`). It's project knowledge that persists in
+your repo, not part of the baked skill.
 
 ## Using it in another repo
 
@@ -211,22 +221,15 @@ change to the scripts; they confirm the skill matches reality on your account's 
   `serverless.yml` at root, `service: ${env:SLS_SERVICE_NAME}` (or pass `--service`),
   a literal `provider.stage` (or `--stage`), and inline `functions:` (not split via
   `${file()}`). Otherwise lean on `--service`/`--repo` or its live-discovery fallback.
-- **Reset** `references/known-groups-and-gotchas.md` and `evals/ground-truth.md` —
-  they're specific to this project and would mislead in another repo.
 
 ## Layout
 ```
 cloudwatch-logs-search/
 ├── SKILL.md                              # operating instructions (Claude reads this)
 ├── README.md                             # this guide (humans read this)
-├── scripts/
-│   ├── resolve_group.py                  # lambda name -> exact log group
-│   └── cwlogs.py                         # discover / sample / search engine
-├── references/
-│   ├── known-groups-and-gotchas.md       # project groups, retention map, $26 lesson
-│   └── filter-syntax-and-accuracy.md     # filter-pattern + console-URL encoding
-└── evals/
-    └── ground-truth.md                   # known-answer validation checks
+└── scripts/
+    ├── resolve_group.py                  # lambda name -> exact log group
+    └── cwlogs.py                         # discover / sample / search engine
 ```
 
 ## Extending it

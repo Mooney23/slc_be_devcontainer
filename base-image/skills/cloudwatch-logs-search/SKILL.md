@@ -131,7 +131,7 @@ When there's at least one REAL match, the report includes a **console link to th
 ```
 The query is appended **after the full stream route** (note the stream repeats), pinning the exact event via `refEventId` (= `eventId`). This is why it works where a bare `…/log-events$3Fstart$3D…` window does **not** — that earlier form leaked the query into the `logGroupName` API call and failed its `[\.\-_/#A-Za-z0-9]+` regex. The report also prints group + stream fallbacks.
 
-**Hand the link over via a file, never by pasting the URL into chat/terminal.** These URLs are long and full of `$`/`%`; when they wrap in a terminal and the user copies across the wrap, stray `%20` spaces get injected mid-name and the console rejects the `logGroupName` (observed: `…__m%20%20ainlambda…` → regex error). Pass `--link-html <file>` to `search` and tell the user to **open the file and click** — no copying. This link doubles as the one-time **console cross-check** (`evals/ground-truth.md` GT-4): if it lands on (and highlights) the event the skill reported, parity is confirmed.
+**Hand the link over via a file, never by pasting the URL into chat/terminal.** These URLs are long and full of `$`/`%`; when they wrap in a terminal and the user copies across the wrap, stray `%20` spaces get injected mid-name and the console rejects the `logGroupName` (observed: `…__m%20%20ainlambda…` → regex error). Pass `--link-html <file>` to `search` and tell the user to **open the file and click** — no copying. This link doubles as a one-time **console cross-check**: if it lands on (and highlights) the event the skill reported, the programmatic path matches the console.
 
 ## Cost discipline (hard gate)
 
@@ -158,13 +158,12 @@ The `--probe` distinguishes them: it counts events of the relevant *type* in the
 
 ## Validating accuracy before relying on it
 
-Trust is earned against ground truth. `evals/ground-truth.md` holds known-answer queries; reproduce them and confirm the script's output matches. For example: a known id should turn up as a REAL hit at a known timestamp (bounded by real delimiters like `[ ] , :`), while a bare search for that same id also returns NOISE hits (the id embedded in ICCIDs, microsecond timestamps, or longer numbers) that the classifier must reject. Keep the concrete known-answer cases in `evals/ground-truth.md`, not here. Also recommend the user do a **one-time cross-check** of one query against the AWS console so they trust the parity with their own eyes.
+Earn trust once, with a query whose answer you already know: search for a term you're sure is present in a given group+window and confirm it comes back **REAL** at the expected place, then do a **one-time cross-check** of that result against the AWS console (open the emitted `--link-html` and confirm it highlights the same event). That parity click is the thing that justifies trusting the programmatic path thereafter. The pure logic (classification, pattern assembly, link building) is best pinned with offline unit tests alongside the scripts; the live console parity is the one check that can't be unit-tested.
 
 ## ⚠️ Security caveat — secrets in logs
 
 Applications sometimes log **secrets in plaintext** to CloudWatch — DB passwords, API keys, or tokens can end up in event bodies (e.g. during a DB connect). So **search output may contain live secrets.** Don't paste raw event bodies into shared/persistent places without redacting, and flag it if you see credentials in results — and raise the logging itself with the owning team, since logging secrets is a bug.
 
-## References
+## Recording gotchas (optional)
 
-- `references/known-groups-and-gotchas.md` — growable list of known log groups, retention map, log formats, and gotchas. Consult it before discovering from scratch; **append** new findings as you learn them.
-- `references/filter-syntax-and-accuracy.md` — CloudWatch filter-pattern semantics (term vs quoted substring, JSON patterns) and the subtle ways a pattern silently fails to match.
+This skill is **stateless** — it ships no bundled knowledge files and discovers everything (groups, retention, log format) live. If you hit a genuinely non-obvious gotcha worth remembering — a field that looks like an id but isn't, a mis-named group, a window where a function logged at INFO — jot it in *this repo's* `docs/` (e.g. `docs/cloudwatch-logs-search.md`). That's project knowledge that persists in the repo; it is not part of the baked skill.
