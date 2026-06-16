@@ -161,7 +161,7 @@ def classify(msg, term, context, ctx_window):
     """Decide whether an occurrence of `term` in `msg` is a REAL match or
     coincidental NOISE. The classic traps: the term sitting inside a longer
     number (SIM ICCID, epoch, float), inside a UUID/RequestId, or inside a
-    microsecond timestamp fraction (.785634Z). Heuristic: a real match is
+    microsecond timestamp fraction (e.g. .123456Z). Heuristic: a real match is
     bounded by non-alphanumeric delimiters ([ ] , : space ' "); a digit or hex
     neighbour means it's embedded in a larger token.
 

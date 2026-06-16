@@ -18,8 +18,8 @@ device service), it falls back to discovering matching groups live in CloudWatch
 Read-only. Verification uses describe_log_groups only.
 
 Usage:
-  resolve_group.py --lambda process_nb            # fuzzy match this repo's fns
-  resolve_group.py --lambda alarm_state_change     # cross-service -> CW discovery
+  resolve_group.py --lambda <keyword>             # fuzzy match this repo's fns
+  resolve_group.py --lambda <other-keyword>        # cross-service -> CW discovery
   resolve_group.py --list                          # list all fns in this repo
   resolve_group.py --lambda X --no-verify          # offline (skip CW lookup)
 Flags: --repo PATH (default /workspace) --service S --stage S --region R
