@@ -16,6 +16,20 @@ base-image/skills/
 
 The directory name becomes the skill's invocation name (`/my-skill`).
 
+## Baked skills
+
+Generated from each `SKILL.md`'s frontmatter — **do not edit by hand.** After
+adding, removing, or renaming a skill, regenerate with
+`./scripts/gen-skills-index.sh`.
+
+<!-- BEGIN baked-skills (generated — run scripts/gen-skills-index.sh) -->
+| Skill | Description |
+|---|---|
+| `architecture-decision-records` | Capture architectural decisions made during coding sessions as structured ADRs (Architecture Decision Records, Nygard format) under `docs/adr/`. |
+| `cloudwatch-logs-search` | Search AWS CloudWatch Logs safely and accurately from the terminal via boto3 (read-only) — targeted log searches that match or beat clicking around the AWS console, with built-in c… |
+| `update-kb` | Assess the current conversation and capture hard-won behavioural knowledge about a backend service into its knowledge base — a `docs/` KB of concepts, runbooks, and gotchas. |
+<!-- END baked-skills -->
+
 ## How they reach the agent at runtime
 
 The Dockerfile copies this dir to `/opt/claude-skills/` in the image. It is

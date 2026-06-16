@@ -366,7 +366,7 @@ No `devcontainer.json` change is needed — `postStartCommand` still points at `
 
 Claude Code skills come from two sources, merged at startup:
 
-1. **Baked-in skills** — shipped in the base image under `/opt/claude-skills/`. Author them in this repo at `base-image/skills/<skill-name>/SKILL.md`; they reach every service via `docker pull`, no per-service copy. (See `base-image/skills/README.md`.)
+1. **Baked-in skills** — shipped in the base image under `/opt/claude-skills/`. Author them in this repo at `base-image/skills/<skill-name>/SKILL.md`; they reach every service via `docker pull`, no per-service copy. See `base-image/skills/README.md` for the convention and a generated index of what's baked in (regenerate with `./scripts/gen-skills-index.sh` after adding/removing a skill).
 2. **Host user-scope skills** — the developer's own `~/.claude/skills/`, flattened on the host by `initializeCommand` into `~/.cache/.claude-skills-resolved` and mounted read-only at `~/.claude/skills-host`.
 
 > **Do not add `rm -rf` to the host-skills resolve step.** `~/.cache/.claude-skills-resolved` is a *single shared* host dir that every service bind-mounts. A bind mount is pinned to the directory's inode, so `rm -rf` + `mkdir` in one service's `initializeCommand` destroys that inode and swaps in a new one — emptying the skills dir in every *other* service's already-running container. Use an in-place `cp -rL` (clobber, no `rm`, no `-n`): it overwrites files in place so live mounts stay intact and edits propagate. The only thing it won't do is prune skills you delete on the host (they linger). If you need deletion-pruning, give each service its own resolve dir keyed by `${localWorkspaceFolderBasename}` instead of sharing one.
