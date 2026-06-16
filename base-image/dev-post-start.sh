@@ -71,6 +71,26 @@ fi
 # --- One-time setup hint ---
 bash /usr/local/bin/print-setup-hint.sh
 
+# --- Assemble Claude skills (baked image skills + host user scope) ---
+# Both sources are copied into the tmpfs at ~/.claude/skills. Whole-skill-dir
+# replacement (rm -rf before cp) avoids merging two same-named skills into a
+# broken hybrid. The LAST source in the loop wins on name collisions:
+#   "baked host"  -> host wins  (baked skills are overridable defaults)  [current]
+#   "host baked"  -> baked wins (baked skills are locked)
+# Skills live in a single dir, so Claude Code's cross-scope precedence never
+# applies — this copy order is the only thing deciding collisions.
+SKILLS_DIR="$HOME/.claude/skills"
+mkdir -p "$SKILLS_DIR"
+for src in /opt/claude-skills "$HOME/.claude/skills-host"; do
+    [ -d "$src" ] || continue
+    for skill in "$src"/*/; do
+        [ -d "$skill" ] || continue
+        name=$(basename "$skill")
+        rm -rf "$SKILLS_DIR/$name"
+        cp -a "$skill" "$SKILLS_DIR/$name"
+    done
+done
+
 # --- Claude Code plugin path workaround ---
 # Workaround for Claude Code plugin path bug in devcontainers
 # See: https://github.com/anthropics/claude-code/issues/10379

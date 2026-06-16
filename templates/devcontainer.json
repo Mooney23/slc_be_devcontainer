@@ -18,7 +18,7 @@
   ],
 
   // Ensure Neovim config dirs exist on the host before mounting
-  "initializeCommand": "mkdir -p ~/.config/nvim ~/.local/share/nvim && rm -rf ~/.cache/.claude-skills-resolved && mkdir -p ~/.cache/.claude-skills-resolved && cp -rL ~/.claude/skills/* ~/.cache/.claude-skills-resolved/ 2>/dev/null || true",
+  "initializeCommand": "mkdir -p ~/.config/nvim ~/.local/share/nvim && mkdir -p ~/.cache/.claude-skills-resolved && cp -rL ~/.claude/skills/* ~/.cache/.claude-skills-resolved/ 2>/dev/null || true && touch ~/.cache/.claude-user-CLAUDE.md && cp -L ~/.claude/CLAUDE.md ~/.cache/.claude-user-CLAUDE.md 2>/dev/null || true",
 
   "mounts": [
     // Neovim config
@@ -33,8 +33,15 @@
     // Claude Code user config file (lives at ~/.claude.json, not inside ~/.claude/)
     "source=${localEnv:HOME}/.claude.json,target=/home/dev/.claude.json,type=bind,consistency=cached",
 
-    // Claude Code skills stored in the user scope of the host
-    "source=${localEnv:HOME}/.cache/.claude-skills-resolved,target=/home/dev/.claude/skills,type=bind,readonly",
+    // Host user-scope skills (flattened by initializeCommand), mounted
+    // read-only as a STAGING dir. dev-post-start.sh merges these on top of the
+    // image's baked-in skills into the real skills dir below.
+    "source=${localEnv:HOME}/.cache/.claude-skills-resolved,target=/home/dev/.claude/skills-host,type=bind,readonly",
+    "source=${localEnv:HOME}/.cache/.claude-user-CLAUDE.md,target=/home/dev/.claude/CLAUDE.md,type=bind,readonly",
+
+    // The real skills dir: a tmpfs so the startup merge is writable and
+    // ephemeral, and is never written back to the host's ~/.claude/skills.
+    "target=/home/dev/.claude/skills,type=tmpfs",
 
     // pip cache so installs are fast across rebuilds
     "source=pip-cache,target=/home/dev/.cache/pip,type=volume",

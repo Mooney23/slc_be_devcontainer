@@ -13,12 +13,13 @@ devcontainer-base/
 │   ├── init-firewall.sh
 │   ├── refresh-firewall-domains.sh
 │   ├── dev-post-start.sh        # canonical post-start logic (baked into image)
-│   └── print-setup-hint.sh      # one-time setup hint (baked into image)
+│   ├── print-setup-hint.sh      # one-time setup hint (baked into image)
+│   └── skills/                  # Claude skills baked into the image (see Claude skills)
 ├── scripts/
 │   ├── dev-container-helpers.sh # host shell helpers (dcup, dcdanger, …)
 │   └── post-start.sh            # thin wrapper copied into each service
 ├── templates/
-│   ├── devcontainer.json.example
+│   ├── devcontainer.json
 │   ├── firewall-extras.sh.example
 │   └── Dockerfile.example
 └── README.md
@@ -358,6 +359,43 @@ rm -f .devcontainer/print-setup-hint.sh
 ```
 
 No `devcontainer.json` change is needed — `postStartCommand` still points at `.devcontainer/post-start.sh`. After this, the service tracks startup changes through the base image automatically. (Requires a base image that includes `dev-post-start.sh` — rebuild/pull first.)
+
+---
+
+## Claude skills
+
+Claude Code skills come from two sources, merged at startup:
+
+1. **Baked-in skills** — shipped in the base image under `/opt/claude-skills/`. Author them in this repo at `base-image/skills/<skill-name>/SKILL.md`; they reach every service via `docker pull`, no per-service copy. (See `base-image/skills/README.md`.)
+2. **Host user-scope skills** — the developer's own `~/.claude/skills/`, flattened on the host by `initializeCommand` into `~/.cache/.claude-skills-resolved` and mounted read-only at `~/.claude/skills-host`.
+
+> **Do not add `rm -rf` to the host-skills resolve step.** `~/.cache/.claude-skills-resolved` is a *single shared* host dir that every service bind-mounts. A bind mount is pinned to the directory's inode, so `rm -rf` + `mkdir` in one service's `initializeCommand` destroys that inode and swaps in a new one — emptying the skills dir in every *other* service's already-running container. Use an in-place `cp -rL` (clobber, no `rm`, no `-n`): it overwrites files in place so live mounts stay intact and edits propagate. The only thing it won't do is prune skills you delete on the host (they linger). If you need deletion-pruning, give each service its own resolve dir keyed by `${localWorkspaceFolderBasename}` instead of sharing one.
+
+`dev-post-start.sh` copies both into a `tmpfs` at `~/.claude/skills` (the dir Claude Code actually reads, since `CLAUDE_CONFIG_DIR=/home/dev/.claude`):
+
+```
+/opt/claude-skills/       (baked into image)        ─┐
+                                                      ├─► merge ─► ~/.claude/skills  (tmpfs)
+~/.claude/skills-host/     (host user scope, RO)     ─┘
+```
+
+The merge is whole-skill-dir replacement into a single directory, so Claude Code's cross-scope precedence never applies — the copy order decides name collisions. The policy is **host-wins**: a developer's same-named host skill overrides the baked one, so baked skills act as overridable defaults. To make baked skills authoritative instead, swap the loop order in `dev-post-start.sh`. Nothing is written back to the host's `~/.claude/skills`, and nothing lands in `/workspace`.
+
+**Per-service rollout:** the merge logic is in the base image (propagates via `docker pull`), but the two skills mounts live in each service's `devcontainer.json`. A service must adopt the `skills-host` + `tmpfs` mounts (see the template) **at the same time** it pulls the new image — the old single read-only mount on `~/.claude/skills` would make the merge fail to write.
+
+### Global `CLAUDE.md` overlay
+
+The same flatten-and-mount trick handles the user-scope `~/.claude/CLAUDE.md`. The host file may be a symlink (e.g. into a dotfiles repo) whose target isn't mounted in the container, so `initializeCommand` resolves it to a real file at `~/.cache/.claude-user-CLAUDE.md` and mounts that read-only onto `/home/dev/.claude/CLAUDE.md`:
+
+```jsonc
+// initializeCommand
+… && touch ~/.cache/.claude-user-CLAUDE.md && cp -L ~/.claude/CLAUDE.md ~/.cache/.claude-user-CLAUDE.md 2>/dev/null || true
+
+// mounts
+"source=${localEnv:HOME}/.cache/.claude-user-CLAUDE.md,target=/home/dev/.claude/CLAUDE.md,type=bind,readonly",
+```
+
+The `touch` is required: a bind mount whose source file is missing makes Docker silently create an empty **directory** at that path, which then mounts as a directory onto `CLAUDE.md` and breaks it. `touch` guarantees the source exists as a file. The `cp -L` clobbers (no `-n`), so edits to the host `CLAUDE.md` propagate on every rebuild.
 
 ---
 

@@ -104,6 +104,14 @@ RUN chmod +x /usr/local/bin/init-firewall.sh \
        > /etc/sudoers.d/$USERNAME-firewall \
     && chmod 0440 /etc/sudoers.d/$USERNAME-firewall
 
+# ── Baked-in Claude skills ───────────────────────────────────────
+# Shipped with the base image so every service gets them via `docker pull`.
+# Merged into the user scope (~/.claude/skills) at startup by
+# dev-post-start.sh. NOT copied straight to ~/.claude/skills — that path is a
+# mount point at runtime, so the image's copy there would be shadowed.
+# Author skills under base-image/skills/<skill-name>/SKILL.md.
+COPY skills/ /opt/claude-skills/
+
 ENV DEVCONTAINER=true
 ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
 
