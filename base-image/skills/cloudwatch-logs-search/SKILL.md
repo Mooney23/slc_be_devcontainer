@@ -19,7 +19,7 @@ description: >-
 
 Two failure modes make ad-hoc CloudWatch searching risky, and this skill is built to prevent both:
 
-1. **Cost.** Logs Insights bills per GB *scanned*. A single careless query (`@message like /85634/` across high-volume groups over months) once scanned **5.26 TB ≈ $26**. `filter_log_events` — the API behind a basic console search — is **free**. This skill defaults to free and treats Insights as a confirm-first exception.
+1. **Cost.** Logs Insights bills per GB *scanned*. A single careless query (`@message like /<id>/` across high-volume groups over months) once scanned **5.26 TB ≈ $26**. `filter_log_events` — the API behind a basic console search — is **free**. This skill defaults to free and treats Insights as a confirm-first exception.
 2. **Wrong conclusions.** A bare term match is full of false positives (an id sitting inside a UUID, a timestamp, a longer number), and a "0 results" is dangerously easy to misread as "it didn't happen" when really the search couldn't have matched (wrong group, expired retention, log level off, mis-typed pattern). Humans skip the checks that catch these; this skill makes them automatic.
 
 The goal: a search that is **at least as accurate as the console, and more trustworthy**, because it paginates fully, classifies every hit, and proves its negatives.
@@ -39,10 +39,10 @@ Two read-only scripts (only `describe_log_groups`, `filter_log_events`, `get_log
 
 **Step 0 — Resolve the log group and CONFIRM it with the user (do this first, every time).** This is the single most important guard: searching the wrong group produces a confident, wrong "0 results". A Lambda log group is `/aws/lambda/<service>-<stage>-<functionKey>` — users rarely remember the full string, so don't make them, and don't guess. Resolve it from this repo's serverless config:
 ```bash
-python "$SKILL/scripts/resolve_group.py" --lambda <name-or-keyword>     # e.g. process_nb, sqs_process_anomaly
+python "$SKILL/scripts/resolve_group.py" --lambda <name-or-keyword>     # e.g. a function name or keyword
 python "$SKILL/scripts/resolve_group.py" --list                          # see all functions in this repo
 ```
-It reads `SLS_SERVICE_NAME` from `.env` and the `functions:` keys + `provider.stage` from `serverless.yml`, builds the exact group name, and verifies it exists in CloudWatch (with retention + size). For a lambda in a **different** service (e.g. the device service — not in this repo), it falls back to discovering matching groups live.
+It reads `SLS_SERVICE_NAME` from `.env` and the `functions:` keys + `provider.stage` from `serverless.yml`, builds the exact group name, and verifies it exists in CloudWatch (with retention + size). For a lambda in a **different** service (not in this repo), it falls back to discovering matching groups live.
 
 Then **present the [approval block](#approval-confirm-before-running) and wait for an explicit OK before searching.** Never search an unconfirmed group. If resolution is ambiguous (several matches) or cross-service, use the picker variant so the user chooses. (If the user hands you a full group name directly, you can skip resolution — but still show the approval block, especially before a wide-window or large-group search.)
 
@@ -63,22 +63,22 @@ Searching the **wrong group**, an **unreachable window**, or a **paid query** ar
 **Standard block** (free search):
 ```
 Confirm before I search:
-  Group     : /aws/lambda/cloudv2deviceingestion-dev-device__process_nb   [exists ✓]
+  Group     : /aws/lambda/<service>-<stage>-<fn>   [exists ✓]
   Retention : 365 d   →   window covered ✓
   Region    : us-east-1
   Window    : 2026-03-09 00:00 → 2026-03-12 00:00 UTC  (end exclusive)
-  Query     : "85634" AND near "alarm_ids" AND ("FIXED" OR "FALSE") NOT "demo-org"
+  Query     : "<id>" AND near "<field>" AND ("<valueA>" OR "<valueB>") NOT "<exclude>"
   Cost/size : filter_log_events — free   (group ~1.8 TB; expect ~1–2 min)
-  Neg-proof : probe "FIXED"
+  Neg-proof : probe "<probe>"
 Run this? (yes / adjust)
 ```
 
 **Ambiguous or cross-service — let the user pick:**
 ```
-Several groups match "alarm_state_change" — which one?
-  1) /aws/lambda/cloudv2device-dev-…__alarm_state_change_lambda   [365 d, 163 MB]  ← prod
-  2) /aws/lambda/testv2device-dev-…__alarm_state_change_lambda    [30 d, 0.5 MB]
-  3) /aws/lambda/demov2device-dev-…__alarm_state_change_lambda    [7 d, 0 MB]
+Several groups match "<keyword>" — which one?
+  1) /aws/lambda/<service>-<prod-stage>-…__<fn>   [365 d, 163 MB]  ← prod
+  2) /aws/lambda/<service>-<test-stage>-…__<fn>   [30 d, 0.5 MB]
+  3) /aws/lambda/<service>-<demo-stage>-…__<fn>   [7 d, 0 MB]
 Pick a number, or paste a full group name.
 ```
 
@@ -94,7 +94,7 @@ Approve this paid query? (yes / no)
 
 **When to re-confirm:** a **new group**, a **wider window**, or **any paid query** needs fresh approval. Refining the query *within* an already-approved group + window doesn't — just state what you ran. Never run an unconfirmed group, and never run Insights without an explicit yes.
 
-**Step 1 — Learn the log format before trusting a filter.** Pull a few raw events so you know how the thing you're searching for actually appears (JSON keys, whether an id is logged as `'alarm_ids': [123]` vs bare):
+**Step 1 — Learn the log format before trusting a filter.** Pull a few raw events so you know how the thing you're searching for actually appears (JSON keys, whether an id is logged as `'<field>': [123]` vs bare):
 ```bash
 python "$SKILL/scripts/cwlogs.py" sample --group <G> --start 2026-03-12 --end 2026-03-13 --n 5
 ```
@@ -104,21 +104,21 @@ This is what stops you from inventing a filter pattern that can't match.
 ```bash
 python "$SKILL/scripts/cwlogs.py" search --group <G> \
   --start 2026-03-09 --end 2026-03-12 \
-  --term 85634 \
-  --context alarm_ids \
-  --probe FIXED
+  --term <id> \
+  --context <field> \
+  --probe <probe>
 ```
 - `--term` is what you're looking for — the string that gets REAL/NOISE-classified.
-- `--context` (optional, recommended) requires that substring near the match — it both narrows server-side and filters noise (e.g. only count `85634` when it's near `alarm_ids`).
-- `--all A B …` — extra **required** substrings (AND), e.g. `--all repair_summary FIXED`. Pushed to the **server** filter, so it cuts how much data comes back.
-- `--any X Y …` — require **at least one** of these (OR), AND'd with everything else, e.g. `--any FIXED FALSE` ("either close state"). The OR group can't safely share one unstructured pattern with required terms, so it's enforced **client-side** on the already-narrowed set.
-- `--not Z …` — **exclude** events containing any of these, e.g. `--not healthcheck demo-org`. Pushed to the **server** filter.
+- `--context` (optional, recommended) requires that substring near the match — it both narrows server-side and filters noise (e.g. only count the id when it's near a known field).
+- `--all A B …` — extra **required** substrings (AND), e.g. `--all <fieldA> <fieldB>`. Pushed to the **server** filter, so it cuts how much data comes back.
+- `--any X Y …` — require **at least one** of these (OR), AND'd with everything else, e.g. `--any <valueA> <valueB>` ("either of two states"). The OR group can't safely share one unstructured pattern with required terms, so it's enforced **client-side** on the already-narrowed set.
+- `--not Z …` — **exclude** events containing any of these, e.g. `--not <exclude1> <exclude2>`. Pushed to the **server** filter.
 - `--probe` (optional, high value) is a term that *should* appear if the relevant event type is being logged in this group+window. It's how a zero gets proven (see below).
 
 These compose to cut volume — net match is `term AND context? AND all… AND (any-of …) AND NOT excl…`. The report echoes the assembled **`Query`** and the exact **`Server`** filterPattern it sent (and, when `--any` is used, how much it trimmed client-side), so you can see precisely what ran:
 ```bash
 python "$SKILL/scripts/cwlogs.py" search --group <G> --start 2026-03-09 --end 2026-03-12 \
-  --term 85634 --context alarm_ids --any FIXED FALSE --not demo-org
+  --term <id> --context <field> --any <valueA> <valueB> --not <exclude>
 ```
 
 Times are **UTC**; the `--end` is **exclusive** (so `--end 2026-03-17` covers through end of 03-16). Default to **narrow** windows and widen deliberately.
@@ -142,7 +142,7 @@ The query is appended **after the full stream route** (note the stream repeats),
 ## Noise classification (accuracy)
 
 A search term routinely matches inside larger tokens. The script labels each hit:
-- **NOISE** — the term is embedded in a longer number (SIM ICCID `…668563481`, epoch, float fraction `.785634Z`), or inside a UUID / RequestId / hash.
+- **NOISE** — the term is embedded in a longer number (e.g. a SIM ICCID, an epoch, or a float fraction), or inside a UUID / RequestId / hash.
 - **CONTEXT-MISS** — a clean match, but the `--context` you required isn't nearby.
 - **REAL** — bounded by real delimiters (`[ ] , : space ' "`) and, if given, with the context present.
 
@@ -158,11 +158,11 @@ The `--probe` distinguishes them: it counts events of the relevant *type* in the
 
 ## Validating accuracy before relying on it
 
-Trust is earned against ground truth. `evals/ground-truth.md` holds known-answer queries; reproduce them and confirm the script's output matches. The seed case: in `/aws/lambda/cloudv2device-dev-device__mainlambda`, alarm **85634** has a REAL `NEW` at `2026-03-10 10:20:22` and `ACK` at `10:37:32` (both `'alarm_ids': [85634]`), while a bare `85634` search also returns many NOISE hits (SIM ICCIDs, timestamps) the classifier must reject. Also recommend the user do a **one-time cross-check** of one query against the AWS console so they trust the parity with their own eyes.
+Trust is earned against ground truth. `evals/ground-truth.md` holds known-answer queries; reproduce them and confirm the script's output matches. For example: a known id should turn up as a REAL hit at a known timestamp (bounded by real delimiters like `[ ] , :`), while a bare search for that same id also returns NOISE hits (the id embedded in ICCIDs, microsecond timestamps, or longer numbers) that the classifier must reject. Keep the concrete known-answer cases in `evals/ground-truth.md`, not here. Also recommend the user do a **one-time cross-check** of one query against the AWS console so they trust the parity with their own eyes.
 
 ## ⚠️ Security caveat — secrets in logs
 
-Some of this project's lambdas log **secrets in plaintext** to CloudWatch — DB passwords and AWS access keys have been seen in the `…device__*` groups (e.g. during DB-connect). So **search output may contain live secrets.** Don't paste raw event bodies into shared/persistent places without redacting, and flag it if you see credentials in results. (This is itself a bug worth raising with the owning team.)
+Applications sometimes log **secrets in plaintext** to CloudWatch — DB passwords, API keys, or tokens can end up in event bodies (e.g. during a DB connect). So **search output may contain live secrets.** Don't paste raw event bodies into shared/persistent places without redacting, and flag it if you see credentials in results — and raise the logging itself with the owning team, since logging secrets is a bug.
 
 ## References
 

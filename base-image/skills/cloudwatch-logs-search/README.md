@@ -39,15 +39,15 @@ Two ways ad-hoc CloudWatch searching goes wrong, both of which this skill preven
 ## Quick start
 
 **Via Claude (the normal way).** Just ask in natural language — "search cloudwatch
-for 85634 in the alarm-state-change lambda in March", "did process_nb log anything
-for device 1378 yesterday", "is there a timeout error in sqs_process_anomaly". The
+for an id in a given lambda in March", "did a function log anything for a device
+yesterday", "is there a timeout error in some function". The
 skill triggers and walks the workflow, confirming the log group with you first.
 
 **Directly (scripts).** `boto3` + AWS creds in your environment; region defaults to
 `$AWS_REGION`/`$AWS_DEFAULT_REGION`/`us-east-1`. From anywhere in the repo:
 ```bash
 # 0. resolve a lambda name -> exact log group (and confirm it)
-python .claude/skills/cloudwatch-logs-search/scripts/resolve_group.py --lambda process_nb
+python .claude/skills/cloudwatch-logs-search/scripts/resolve_group.py --lambda <function-or-keyword>
 
 # 1. learn the log format
 python .claude/skills/cloudwatch-logs-search/scripts/cwlogs.py sample \
@@ -56,7 +56,7 @@ python .claude/skills/cloudwatch-logs-search/scripts/cwlogs.py sample \
 # 2. search (classified + proven negative)
 python .claude/skills/cloudwatch-logs-search/scripts/cwlogs.py search \
   --group /aws/lambda/<resolved> --start 2026-03-09 --end 2026-03-12 \
-  --term 85634 --context alarm_ids --probe FIXED
+  --term <id> --context <field> --probe <probe>
 ```
 
 ## How it works
@@ -143,10 +143,10 @@ of 03-16). Default to narrow windows.
 
 Net match: `term AND context? AND all… AND (any-of …) AND NOT excl…`.
 
-- **AND / 3+ terms** — `--all`: `--term 85634 --all alarm_ids FIXED repair_summary`
-- **OR group** — `--any`: `--term 85634 --any FIXED FALSE` ("either close state")
-- **NOT** — `--not`: `--term error --not healthcheck demo-org`
-- **Combine** — `--term 85634 --context alarm_ids --any FIXED FALSE --not demo-org`
+- **AND / 3+ terms** — `--all`: `--term <id> --all <fieldA> <fieldB> <fieldC>`
+- **OR group** — `--any`: `--term <id> --any <valueA> <valueB>` ("either of two states")
+- **NOT** — `--not`: `--term error --not <exclude1> <exclude2>`
+- **Combine** — `--term <id> --context <field> --any <valueA> <valueB> --not <exclude>`
 
 Required terms (`--term`, `--context`, `--all`) and exclusions (`--not`) are pushed
 to the **server** filter pattern — that's where transfer volume is cut. The `--any`
@@ -161,7 +161,7 @@ true match. The report shows the assembled `Query` and the exact `Server` patter
 ### /aws/lambda/<group>
     retention=365  window-covered=YES  server-hits=4  after --any=2
     REAL=2  NOISE=0  CONTEXT-MISS=0
-    >>> REAL 2026-03-10 10:20:22  ...alarm_ids': [85634]...
+    >>> REAL 2026-03-10 10:20:22  ...<field>': [<id>]...
     LINK (first match @ 2026-03-10 10:20:22 UTC, highlighted): → <url>
 ```
 - **window-covered** — `NO` means your window predates the group's retention; the
@@ -193,15 +193,15 @@ event** (the blue-highlighted row), built from the event's `logStreamName`,
 - **Logs Insights is the only paid path** — reserve it for true aggregation, on the
   smallest sufficient group, with an anchored filter, and **only after confirming
   cost**. The script never calls it.
-- **⚠ Secrets in logs.** Some of this project's lambdas log DB passwords / AWS keys
-  in plaintext to CloudWatch. Search output may contain secrets — redact before
-  sharing, and consider raising it with the owning team.
+- **⚠ Secrets in logs.** Applications sometimes log sensitive values (DB passwords,
+  API keys, tokens) in plaintext to CloudWatch, so search output may contain secrets
+  — redact before sharing, and raise the logging itself with the owning team.
 
 ## Validating it
 
 `evals/ground-truth.md` has known-answer checks (search hits, noise rejection, true
 negatives, multi-term operators, and a console-link parity click). Run them after any
-change to the scripts; they confirm the skill matches reality on this account's data.
+change to the scripts; they confirm the skill matches reality on your account's data.
 
 ## Using it in another repo
 
