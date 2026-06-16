@@ -381,6 +381,8 @@ Claude Code skills come from two sources, merged at startup:
 
 The merge is whole-skill-dir replacement into a single directory, so Claude Code's cross-scope precedence never applies — the copy order decides name collisions. The policy is **host-wins**: a developer's same-named host skill overrides the baked one, so baked skills act as overridable defaults. To make baked skills authoritative instead, swap the loop order in `dev-post-start.sh`. Nothing is written back to the host's `~/.claude/skills`, and nothing lands in `/workspace`.
 
+Docker mounts a `tmpfs` **root-owned**, but the merge runs as the non-root `dev` user, so `dev-post-start.sh` `chown`s `~/.claude/skills` to the current user before copying — otherwise the merge fails with `Permission denied`. (Equivalent alternative if you'd rather keep it declarative: add `tmpfs-mode=1777` to the tmpfs mount in `devcontainer.json`.)
+
 **Per-service rollout:** the merge logic is in the base image (propagates via `docker pull`), but the two skills mounts live in each service's `devcontainer.json`. A service must adopt the `skills-host` + `tmpfs` mounts (see the template) **at the same time** it pulls the new image — the old single read-only mount on `~/.claude/skills` would make the merge fail to write.
 
 ### Global `CLAUDE.md` overlay

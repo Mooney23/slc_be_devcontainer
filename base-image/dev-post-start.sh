@@ -81,6 +81,10 @@ bash /usr/local/bin/print-setup-hint.sh
 # applies — this copy order is the only thing deciding collisions.
 SKILLS_DIR="$HOME/.claude/skills"
 mkdir -p "$SKILLS_DIR"
+# The skills dir is a tmpfs, which Docker mounts root-owned. The merge below
+# runs as the (non-root) dev user, so take ownership first or the cp's fail
+# with "Permission denied". Harmless if already owned / not a tmpfs.
+sudo chown "$(id -u):$(id -g)" "$SKILLS_DIR" 2>/dev/null || true
 for src in /opt/claude-skills "$HOME/.claude/skills-host"; do
     [ -d "$src" ] || continue
     for skill in "$src"/*/; do
