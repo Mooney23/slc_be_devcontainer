@@ -1,0 +1,8 @@
+{
+  "name": "notes-workflow",
+  "description": "Daily-log lifecycle plus a capture/recall memory workflow over a markdown notes vault.",
+  "author": {
+    "name": "Anant Dongre",
+    "email": "anant.dongre@shorelineiot.com"
+  }
+}

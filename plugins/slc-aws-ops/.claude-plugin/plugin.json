@@ -1,0 +1,8 @@
+{
+  "name": "slc-aws-ops",
+  "description": "AWS operational tooling for backend services — safe, read-only CloudWatch Logs search from the terminal.",
+  "author": {
+    "name": "Anant Dongre",
+    "email": "anant.dongre@shorelineiot.com"
+  }
+}

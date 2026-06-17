@@ -1,0 +1,30 @@
+{
+  "name": "slc-plugins",
+  "description": "Shared Claude Code skills for Shoreline backend services — knowledge-base upkeep, AWS CloudWatch log search, the local Flask dev loop, and a notes/daily-log workflow.",
+  "owner": {
+    "name": "Anant Dongre",
+    "email": "anant.dongre@shorelineiot.com"
+  },
+  "plugins": [
+    {
+      "name": "slc-backend-knowledge",
+      "source": "./plugins/slc-backend-knowledge",
+      "description": "Capture and maintain a backend service's docs/knowledge base and architectural decisions (ADRs), and check the KB for staleness against the source."
+    },
+    {
+      "name": "slc-aws-ops",
+      "source": "./plugins/slc-aws-ops",
+      "description": "AWS operational tooling for backend services — safe, read-only CloudWatch Logs search from the terminal."
+    },
+    {
+      "name": "slc-dev-loop",
+      "source": "./plugins/slc-dev-loop",
+      "description": "Inner dev loop for backend services — start and exercise the local Flask dev server, and read Bitbucket pull requests."
+    },
+    {
+      "name": "notes-workflow",
+      "source": "./plugins/notes-workflow",
+      "description": "Daily-log lifecycle plus a capture/recall memory workflow over a markdown notes vault."
+    }
+  ]
+}

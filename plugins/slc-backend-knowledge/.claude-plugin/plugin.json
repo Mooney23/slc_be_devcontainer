@@ -1,0 +1,8 @@
+{
+  "name": "slc-backend-knowledge",
+  "description": "Capture and maintain a backend service's docs/knowledge base and architectural decisions (ADRs), and check the KB for staleness against the source.",
+  "author": {
+    "name": "Anant Dongre",
+    "email": "anant.dongre@shorelineiot.com"
+  }
+}
