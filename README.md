@@ -17,9 +17,11 @@ devcontainer-base/
 │   └── skills/                  # Claude skills baked into the image (see Claude skills)
 ├── scripts/
 │   ├── dev-container-helpers.sh # host shell helpers (dcup, dcdanger, …)
+│   ├── gen-skills-index.sh      # regenerates the baked-skills index in base-image/skills/README.md
 │   └── post-start.sh            # thin wrapper copied into each service
 ├── templates/
 │   ├── devcontainer.json
+│   ├── service-README.md        # service-side dev container guide (copied to .devcontainer/README.md)
 │   ├── firewall-extras.sh.example
 │   └── Dockerfile.example
 └── README.md
@@ -109,7 +111,8 @@ cp scripts/post-start.sh your-service/.devcontainer/
 
 # Copy and rename the templates
 cp templates/Dockerfile.example your-service/.devcontainer/Dockerfile
-cp templates/devcontainer.json.example your-service/.devcontainer/devcontainer.json
+cp templates/devcontainer.json  your-service/.devcontainer/devcontainer.json
+cp templates/service-README.md  your-service/.devcontainer/README.md
 ```
 
 `post-start.sh` is a one-line wrapper around the baked `/usr/local/bin/dev-post-start.sh` — you copy it in once and never touch it again. (The setup hint and all real startup logic live in the base image now, so there's no `print-setup-hint.sh` to copy.)
@@ -125,6 +128,7 @@ your-service/
 ├── .devcontainer/
 │   ├── devcontainer.json
 │   ├── Dockerfile
+│   ├── README.md                # service-side guide (from templates/service-README.md)
 │   ├── firewall-extras.sh       # (optional) service-specific whitelisted domains
 │   ├── post-start.local.sh      # (optional) service-specific startup steps
 │   └── post-start.sh            # thin wrapper → /usr/local/bin/dev-post-start.sh
