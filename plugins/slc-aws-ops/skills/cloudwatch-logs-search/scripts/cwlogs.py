@@ -30,7 +30,7 @@ import argparse, datetime as dt, os, re, sys, urllib.parse
 try:
     import boto3
 except ImportError:
-    sys.exit("boto3 not available — run inside the devcontainer venv (no aws CLI needed).")
+    sys.exit("boto3 not available — install it with 'pip install boto3' (no aws CLI needed).")
 
 
 def to_ms(s):
