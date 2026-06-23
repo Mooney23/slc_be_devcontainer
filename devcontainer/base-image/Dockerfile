@@ -96,15 +96,25 @@ COPY init-firewall.sh /usr/local/bin/
 COPY refresh-firewall-domains.sh /usr/local/bin/
 COPY dev-post-start.sh /usr/local/bin/
 COPY print-setup-hint.sh /usr/local/bin/
+# install-browser-addon.sh is baked but inert — a service runs it from its own
+# .devcontainer/Dockerfile (gated on a build-arg) to opt into Playwright +
+# headless Chromium. See the script header for the full rationale.
+COPY install-browser-addon.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh \
                 /usr/local/bin/refresh-firewall-domains.sh \
                 /usr/local/bin/dev-post-start.sh \
                 /usr/local/bin/print-setup-hint.sh \
+                /usr/local/bin/install-browser-addon.sh \
     && echo "$USERNAME ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh" \
        > /etc/sudoers.d/$USERNAME-firewall \
     && chmod 0440 /etc/sudoers.d/$USERNAME-firewall
 
 ENV DEVCONTAINER=true
 ENV PATH="/home/${USERNAME}/.local/bin:${PATH}"
+
+# Where Playwright stores browsers. Set in the base (harmless when no browser
+# is installed) so the build-time addon and the runtime MCP server agree on a
+# single system-wide path that the non-root `dev` user can read.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 USER dev
