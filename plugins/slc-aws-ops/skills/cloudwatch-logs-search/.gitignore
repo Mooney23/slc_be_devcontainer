@@ -1,4 +1,0 @@
-# Generated console-link artifacts from `cwlogs.py --link-html <file>`.
-# These embed real log-group / stream / event IDs — never commit them.
-verify-link.html
-*.link.html

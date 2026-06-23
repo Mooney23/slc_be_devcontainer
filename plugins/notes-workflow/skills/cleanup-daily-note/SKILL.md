@@ -7,6 +7,10 @@ description: Performs evening cleanup on the daily Obsidian work log — moves u
 
 Perform an evening cleanup on today's daily note at `notes/01_Logs/YYYY/MM_MonthName/YYYY-MM-DD.md`. This is the "signal vs noise" pass — consolidating completed work, migrating unfinished tasks, and flagging clutter for the user to review.
 
+## Where the vault lives
+
+Paths below are relative to the notes vault. Resolve it without assuming a devcontainer: use `$NOTES_PATH` if it's set, otherwise a `notes/` directory under the workspace (in a devcontainer that's `/workspace/notes`). Where a command below says `notes/`, that's the vault root — if `$NOTES_PATH` is set, use it instead. If neither resolves, tell the user the vault isn't reachable and stop.
+
 ## Prerequisites
 
 Check if today's daily note exists by running `ls notes/01_Logs/YYYY/MM_MonthName/YYYY-MM-DD.md` via Bash (e.g., `ls notes/01_Logs/2026/03_March/2026-03-21.md`). Do NOT use the Glob tool for this check — it may not find files in mounted/external directories. If the file doesn't exist (ls returns an error), inform the user and stop — there's nothing to clean up.

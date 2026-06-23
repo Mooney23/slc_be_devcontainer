@@ -1,0 +1,8 @@
+{
+  "name": "slc-be-bitbucket",
+  "description": "Review Bitbucket pull requests via the REST API — view, list, diff, read comments, and post review comments (no approve/merge).",
+  "author": {
+    "name": "Anant Dongre",
+    "email": "anant.dongre@shorelineiot.com"
+  }
+}

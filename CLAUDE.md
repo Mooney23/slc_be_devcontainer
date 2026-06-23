@@ -6,32 +6,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is **infrastructure, not an application.** It produces a shared, hardened Python dev-container base Docker image plus the per-service scaffolding that inherits from it. There is no app to run and no test suite here — the "artifacts" are a Docker image and a set of files copied into each service's `.devcontainer/`. Edits here ship to every service via `docker pull` of a rebuilt image (for baked content) or by re-copying templates (for per-service files).
 
-The full design rationale lives in `README.md` (~640 lines) — it is the authoritative reference for the security model and firewall internals. This file captures the structural decisions and gotchas that are easy to break.
+The root `README.md` is the north-star overview. The full infra design rationale (~640 lines — the authoritative reference for the security model and firewall internals) lives in `devcontainer/README.md`, and the broader project direction in `docs/direction.md`. This file captures the structural decisions and gotchas that are easy to break.
 
 ## Commands
 
 ```bash
-# Build the base image (run from base-image/)
-cd base-image && docker build -t your-registry/devcontainer-base:latest .
+# Build the base image (run from devcontainer/base-image/)
+cd devcontainer/base-image && docker build -t your-registry/devcontainer-base:latest .
 docker build --build-arg CLAUDE_CODE_VERSION=2.1.52 -t ...:latest .   # pin Claude Code
 docker build --build-arg PYTHON_VERSION=3.12 -t ...:3.12 .            # different Python
 
-# Regenerate the baked-skills index table after adding/removing/renaming a skill
-./scripts/gen-skills-index.sh
-
 # Lint shell scripts (no CI enforces this; run manually if available)
-shellcheck base-image/*.sh scripts/*.sh
+shellcheck devcontainer/base-image/*.sh devcontainer/scripts/*.sh
 ```
 
-Host-side helper commands (`dcup`, `dcdanger`, `dcnvim`, `dcshell`, `dcexec`, `dcrefresh`) are defined in `scripts/dev-container-helpers.sh` and run on the **host**, not in this repo's containers. They drive a service's container, injecting short-lived STS creds.
+Host-side helper commands (`dcup`, `dcdanger`, `dcnvim`, `dcshell`, `dcexec`, `dcrefresh`) are defined in `devcontainer/scripts/dev-container-helpers.sh` and run on the **host**, not in this repo's containers. They drive a service's container, injecting short-lived STS creds.
 
-## Architecture: three buckets, three propagation paths
+## Architecture: four buckets, four propagation paths
 
 The single most important thing to internalize is **where a file lives determines how a change reaches services**:
 
-- **`base-image/`** — everything baked into the image (`Dockerfile`, `init-firewall.sh`, `refresh-firewall-domains.sh`, `dev-post-start.sh`, `print-setup-hint.sh`, `skills/`). Changes propagate to services via **rebuild + push + `docker pull`**. This is where the real startup logic and firewall live.
-- **`scripts/`** — files that live *with each service*. `post-start.sh` is a **thin wrapper** (just `exec bash /usr/local/bin/dev-post-start.sh`) copied into each service once and never touched again. `dev-container-helpers.sh` is sourced on the developer's host. `gen-skills-index.sh` is a repo maintenance tool.
-- **`templates/`** — starting points copied into a new service's `.devcontainer/` (`devcontainer.json`, `Dockerfile.example`, `service-README.md`, `firewall-extras.sh.example`).
+- **`devcontainer/base-image/`** — everything baked into the image (`Dockerfile`, `init-firewall.sh`, `refresh-firewall-domains.sh`, `dev-post-start.sh`, `print-setup-hint.sh`). Changes propagate to services via **rebuild + push + `docker pull`**. This is where the real startup logic and firewall live.
+- **`devcontainer/scripts/`** — files that live *with each service*. `post-start.sh` is a **thin wrapper** (just `exec bash /usr/local/bin/dev-post-start.sh`) copied into each service once and never touched again. `dev-container-helpers.sh` is sourced on the developer's host.
+- **`devcontainer/templates/`** — starting points copied into a new service's `.devcontainer/` (`devcontainer.json`, `Dockerfile.example`, `service-README.md`, `firewall-extras.sh.example`).
+- **`plugins/` + `.claude-plugin/marketplace.json`** — this repo doubles as the `slc-plugins` Claude Code plugin marketplace. Skills live here as plugins and propagate **not** through the image but by developers installing/updating the marketplace on their **host** (`~/.claude/plugins/`), which the container inherits through the bind-mounted `~/.claude`. See the Claude skills section below.
 
 ### The thin-wrapper post-start pattern
 
@@ -45,9 +43,11 @@ Default-deny egress via `iptables`/`ipset`, run as root every container start. P
 
 To add a domain for all services: edit `ALLOWED_DOMAINS` in `init-firewall.sh`, rebuild, push. For one service: it adds `EXTRA_DOMAINS` in its own `.devcontainer/firewall-extras.sh` (no rebuild).
 
-### Baked skills
+### Claude skills
 
-Author skills at `base-image/skills/<name>/SKILL.md` (frontmatter `name` + `description`, dir name = invocation name). The Dockerfile copies them to `/opt/claude-skills/` — **not** to `~/.claude/skills`, which is a tmpfs mount point at runtime and would shadow the image copy. At startup `dev-post-start.sh` merges baked skills + the host's user-scope skills into the tmpfs `~/.claude/skills` via whole-dir replacement. The **last source in the loop wins on name collisions** — currently `host` (so baked skills are overridable defaults; swap the loop order to lock them). After changing the skill set, run `./scripts/gen-skills-index.sh` to update the table in `base-image/skills/README.md`.
+Skills ship as **marketplace plugins**, not baked into the image. This repo *is* the `slc-plugins` marketplace: `.claude-plugin/marketplace.json` + `plugins/<plugin>/skills/<skill>/SKILL.md` (one plugin holds many skills; current plugins: `slc-be-aws-ops`, `slc-be-knowledge`, `slc-be-dev`, `slc-be-bitbucket`, `notes-workflow`). To change a skill, edit it under `plugins/`, push, and developers pick it up via a normal `claude plugin` update — no image rebuild. The container sees plugins because the host's `~/.claude` (including `~/.claude/plugins/`) is bind-mounted in.
+
+A developer's **loose host skills** under `~/.claude/skills/` (not yet packaged) still reach the container at runtime: `dev-post-start.sh` copies them from the read-only `~/.claude/skills-host` staging mount into the tmpfs `~/.claude/skills`. That's the only thing the startup script does with skills now — the old baked `/opt/claude-skills` source and its merge were removed when the marketplace replaced baking.
 
 ## Gotchas (these have bitten before — see README for full reasoning)
 

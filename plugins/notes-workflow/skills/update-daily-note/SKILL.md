@@ -7,6 +7,10 @@ description: Appends a session summary to the daily Obsidian work log in notes/0
 
 Append a terse summary of the current session's work to today's daily note at `notes/01_Logs/YYYY/MM_MonthName/YYYY-MM-DD.md` (e.g., `notes/01_Logs/2026/03_March/2026-03-21.md`).
 
+## Where the vault lives
+
+Paths below are relative to the notes vault. Resolve it without assuming a devcontainer: use `$NOTES_PATH` if it's set, otherwise a `notes/` directory under the workspace (in a devcontainer that's `/workspace/notes`). Where a command below says `notes/`, that's the vault root — if `$NOTES_PATH` is set, use it instead. If neither resolves, tell the user the vault isn't reachable and stop.
+
 ## Prerequisite
 
 Check if today's note exists by running `ls notes/01_Logs/YYYY/MM_MonthName/YYYY-MM-DD.md` via Bash. Do NOT use the Glob tool for this check — it may not find files in mounted/external directories. If the file does not exist (ls returns an error), invoke the `create-daily-note` skill first, then continue with the update.

@@ -1,0 +1,8 @@
+{
+  "name": "slc-be-dev",
+  "description": "Inner dev loop for backend services — start and exercise the local Flask dev server.",
+  "author": {
+    "name": "Anant Dongre",
+    "email": "anant.dongre@shorelineiot.com"
+  }
+}

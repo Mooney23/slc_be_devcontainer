@@ -1,8 +1,0 @@
-{
-  "name": "slc-dev-loop",
-  "description": "Inner dev loop for backend services — start and exercise the local Flask dev server, and read Bitbucket pull requests.",
-  "author": {
-    "name": "Anant Dongre",
-    "email": "anant.dongre@shorelineiot.com"
-  }
-}

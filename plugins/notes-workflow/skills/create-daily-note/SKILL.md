@@ -7,6 +7,10 @@ description: Creates a daily Obsidian work log note in notes/01_Logs/YYYY/MM_Mon
 
 Create today's daily work log note in `notes/01_Logs/YYYY/MM_MonthName/` using the bundled Obsidian template.
 
+## Where the vault lives
+
+Paths below are relative to the notes vault. Resolve it without assuming a devcontainer: use `$NOTES_PATH` if it's set, otherwise a `notes/` directory under the workspace (in a devcontainer that's `/workspace/notes`). Where a command below says `notes/`, that's the vault root — if `$NOTES_PATH` is set, use it instead. If neither resolves, tell the user the vault isn't reachable and stop.
+
 ## Steps
 
 1. Determine today's date.
@@ -35,6 +39,6 @@ Note: 11th, 12th, and 13th are exceptions — they use "th", not "st"/"nd"/"rd".
 
 ## Important
 
-- The top-level `notes/01_Logs/` directory is expected to already exist (mounted in the devcontainer). However, year and month subdirectories (e.g., `2026/03_March/`) should be created as needed.
+- The top-level `notes/01_Logs/` directory is expected to already exist in the vault. However, year and month subdirectories (e.g., `2026/03_March/`) should be created as needed.
 - Never overwrite an existing note. If the file exists, just inform the user.
 - Always use today's date. The user does not specify a date.

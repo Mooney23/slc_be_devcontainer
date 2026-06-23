@@ -26,7 +26,23 @@ For each calendar day from `week_start` to `week_end`:
 2. Check if the file exists — if not, skip it silently.
 3. Read the file.
 
-## Step 3: Extract sections
+## Step 3: Scan plan files for status drift
+
+Independently of the daily logs, scan the ticket/work **plan files** at the vault root for
+lifecycle drift. See `notes/plan-lifecycle-convention.md` for the convention.
+
+1. List `notes/*.md` and read the YAML frontmatter of each. Consider only files that HAVE a
+   `status:` field (plan files); ignore reference docs, tutorials, and presentations.
+2. Bucket each plan file by status:
+   - **Drifting** — `status` is not `done` AND `updated` is older than ~10 days before
+     `week_end`. These plans may be stale / forgotten.
+   - **Awaiting PROD verification** — `status: verifying-prod`. Surface so they get checked.
+   - **Ready to archive** — `status: done` but the file is still at vault root (not yet in
+     `notes/Archive/`).
+3. Carry these buckets into the output (Step 6 below). Do not modify or move any plan file
+   here — this step only reports.
+
+## Step 4: Extract sections
 
 From each daily note, extract the content of three sections:
 - `## 🛠 Work Stream (The "Sensor")` — read for context only
@@ -39,7 +55,7 @@ A section ends when the next `##` heading begins.
 
 The Work Stream is background context: use it to understand the reasoning, root causes, and technical detail behind the Done Today items. Do not copy it directly into the summary — but do use it to write richer, more specific bullets (e.g., if Done Today says "fixed schema bug" and Work Stream explains it was `fields.Int` → `fields.Str` in `schema.py:126`, the summary bullet can include that specificity).
 
-## Step 4: Synthesize a condensed summary
+## Step 5: Synthesize a condensed summary
 
 Write the weekly note body. The goal is brevity: someone should be able to read the entire note in under 2 minutes.
 
@@ -58,7 +74,7 @@ Condense the "Done Today" lists across all days into a tight grouped list:
 - Drop items that are purely administrative noise (e.g., "updated placeholder", "fixed typo").
 - Aim for 5–10 bullets total, fewer if the week was light.
 
-## Step 5: Write the output file
+## Step 6: Write the output file
 
 **Filename format:**
 - Same month: `W{nn}_{MmmDD-DD}.md` (e.g., `W12_Mar16-22.md`)
@@ -89,13 +105,27 @@ week_end: YYYY-MM-DD
 ## Done This Week
 - <condensed bullet>
 ...
+
+## Plan Status Check
+**Drifting (no update in 10+ days, not done):**
+- `<plan-file>.md` — status: <status>, updated <date>
+
+**Awaiting PROD verification:**
+- `<plan-file>.md` — updated <date>
+
+**Ready to archive (done, still at root):**
+- `<plan-file>.md` — move to notes/Archive/ once confirmed
 ```
 
 If there were no meetings at all that week, omit the Meetings section entirely.
 
-## Step 6: Confirm to the user
+Omit any empty bucket in **Plan Status Check**; omit the whole section if all three buckets are empty.
+
+## Step 7: Confirm to the user
 
 Tell the user the file was created and give the path. Optionally note how many days had content and how many were skipped.
+
+If any plan files are "Ready to archive", remind the user that archival is manual and ask whether to move them to `notes/Archive/` (only `status: done` plans, per the convention). Never move plan files automatically.
 
 ---
 
