@@ -144,6 +144,86 @@ dcup
 
 Delete the local copy and restart to revert to the base image's version.
 
+## Browser automation (optional)
+
+If the Claude agent in this service needs to open a real browser — e.g. to reproduce a UI issue or inspect what a page actually renders — you can enable headless Chromium driven by the [Playwright MCP server](https://github.com/microsoft/playwright-mcp). It gives the agent two ways to "see" a page:
+
+- **`browser_snapshot`** — the accessibility tree as structured text (cheap; use for navigating, clicking, filling forms, reading content).
+- **`browser_take_screenshot`** — actual rendered pixels for vision (use when the question is genuinely visual: layout, dark mode, visual regression).
+
+No display is needed — headless Chromium does a full layout-and-paint pass to an offscreen buffer, so screenshots match headed mode.
+
+This is **off by default** (Chromium + libs add ~400–500 MB). Enabling it is three steps:
+
+**1. Install the browser at build time.** In this service's `Dockerfile`, flip the build-arg (the addon block is already in `Dockerfile.example`):
+
+```dockerfile
+ARG INSTALL_BROWSER=true
+USER root
+RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
+        bash /usr/local/bin/install-browser-addon.sh; \
+    fi
+USER dev
+```
+
+The addon (baked in the base image, inert until called) installs the Playwright MCP server **and** Chromium during the image build, when the network is open. Nothing is fetched at runtime, so the egress firewall doesn't block it.
+
+**2. Allow the sites you'll browse.** Every host the page loads — the app, its API, and its login/IdP — goes through the same firewall, so each must be in `firewall-extras.sh` or the page won't load:
+
+```bash
+# .devcontainer/firewall-extras.sh
+EXTRA_DOMAINS=(
+    "cloudv2.shorelineiot.com"
+)
+```
+
+Start with the app host; if requests to an API or login host get blocked, add those too. If you only point the browser at a local dev server, there's nothing to add.
+
+**3. Add the MCP config.** Copy `mcp.json.example` to this repo's **root** as `.mcp.json` (project scope, committed). It invokes the baked `mcp-server-playwright` binary directly — no npm fetch at runtime:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "mcp-server-playwright",
+      "args": ["--headless", "--browser", "chromium"]
+    }
+  }
+}
+```
+
+> **Note:** `browser_run_code_unsafe` (arbitrary in-page code execution, RCE-equivalent) is **off** by default and the config above does not enable it. Leave it disabled.
+>
+> If Chromium fails to launch in the container, add `"--no-sandbox"` to the `args`.
+
+### Authenticating to a logged-in app
+
+A headless browser starts with no session. To investigate something behind a login, capture a **storage-state** on your host once and reuse it — don't put passwords in the container.
+
+1. On your **host**, log into the app in a Playwright-driven browser and save the session (cookies + localStorage, which is where access/refresh tokens live):
+
+   ```bash
+   npx playwright open --save-storage=auth.json https://cloudv2.shorelineiot.com
+   # log in in the window that opens, then close it
+   ```
+
+   Use a dedicated, least-privilege account (e.g. one scoped to a single org) for this.
+
+2. Point your host env var at that file and uncomment the storage-state mount in `devcontainer.json`:
+
+   ```bash
+   export BROWSER_AUTH_STATE=/absolute/path/to/auth.json
+   ```
+
+3. Tell the MCP server to load it by adding `--storage-state` and `--isolated` to the `args` in `.mcp.json`:
+
+   ```json
+   "args": ["--headless", "--browser", "chromium",
+            "--isolated", "--storage-state", "/home/dev/.config/playwright-auth/storage-state.json"]
+   ```
+
+The mount is read-only, so the session is never written back. If the app keeps a refresh token in localStorage, the headless session renews itself for as long as that token stays valid; once it expires, re-capture `auth.json` on the host.
+
 ## Rebuilding
 
 After changing `Dockerfile` or `devcontainer.json`:

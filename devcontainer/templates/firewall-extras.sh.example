@@ -13,4 +13,12 @@ EXTRA_DOMAINS=(
     "github.com"
     # "pypi.org"
     # "files.pythonhosted.org"
+
+    # --- Browser automation targets (only if you enabled INSTALL_BROWSER) ---
+    # Every host the page loads — the app, its API, and its login/IdP — goes
+    # through this same firewall, so each must be listed or the page fails to
+    # load. Start with the app host and add API/IdP hosts if requests to them
+    # get blocked. CDN-fronted *.shorelineiot.com IPs rotate, but the 5-minute
+    # refresh cron re-resolves these automatically (add-only).
+    # "cloudv2.shorelineiot.com"
 )

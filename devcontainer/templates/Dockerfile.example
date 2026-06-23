@@ -5,4 +5,25 @@ FROM your-registry/devcontainer-python:3.13
 #     libpq-dev \
 #     && rm -rf /var/lib/apt/lists/*
 
+# ── Browser automation (opt-in) ──────────────────────────────────
+# Adds the Playwright MCP server + headless Chromium so the Claude agent
+# can open pages and "see" them (accessibility snapshot + screenshots).
+# Off by default — flip INSTALL_BROWSER to "true" (here or via
+# devcontainer.json's build.args) to enable it for this service.
+#
+# The addon script is baked into the base image but inert until called.
+# It runs at BUILD time (open network) so the browser + MCP server are
+# present at runtime without touching npm/CDN, which the egress firewall
+# blocks. See install-browser-addon.sh in the base image for details.
+#
+# Don't forget the other two pieces when enabling:
+#   - add the site(s) you'll browse to .devcontainer/firewall-extras.sh
+#   - copy mcp.json.example to this repo's root as .mcp.json
+ARG INSTALL_BROWSER=false
+USER root
+RUN if [ "$INSTALL_BROWSER" = "true" ]; then \
+        bash /usr/local/bin/install-browser-addon.sh; \
+    fi
+USER dev
+
 WORKDIR /workspace

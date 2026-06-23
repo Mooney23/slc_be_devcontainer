@@ -64,7 +64,17 @@ playwright install --with-deps chromium
 # --- 3. Make the browser readable/executable by the non-root `dev` user ---
 chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
 
-# --- 4. Tidy apt lists added by --with-deps to keep the layer small ---
+# --- 4. Sanity-check the MCP server binary the runtime .mcp.json relies on ---
+# The committed .mcp.json invokes `mcp-server-playwright` directly (the global
+# bin from @playwright/mcp) so runtime needs no npm fetch. If the package ever
+# renames its bin, fail the build here rather than hanging at container start.
+if ! command -v mcp-server-playwright >/dev/null 2>&1; then
+    echo "ERROR: mcp-server-playwright not on PATH after install." >&2
+    echo "       The @playwright/mcp bin name may have changed — update .mcp.json." >&2
+    exit 1
+fi
+
+# --- 5. Tidy apt lists added by --with-deps to keep the layer small ---
 rm -rf /var/lib/apt/lists/*
 
 echo "=== Browser automation addon installed ==="

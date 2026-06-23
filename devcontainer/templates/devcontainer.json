@@ -53,6 +53,15 @@
 
     "source=${localEnv:NOTES_PATH},target=/workspace/notes,type=bind"
 
+    // Browser automation auth (only if you enabled INSTALL_BROWSER):
+    // a Playwright storage-state JSON (cookies + localStorage tokens) you
+    // captured on the HOST after logging into the target app. Mounted
+    // read-only so the headless browser starts pre-authenticated and never
+    // writes the session back. Point the MCP server at it with
+    // --storage-state (see .mcp.json and the README). Set BROWSER_AUTH_STATE
+    // on your host to the file path.
+    // ,"source=${localEnv:BROWSER_AUTH_STATE},target=/home/dev/.config/playwright-auth/storage-state.json,type=bind,readonly"
+
     // NOT MOUNTED (by design):
     //   ~/.ssh (full dir), ~/.aws, ~/.config/gcloud, ~/.kube, ~/.gnupg, ~/.netrc
     //
